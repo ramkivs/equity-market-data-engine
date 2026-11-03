@@ -181,6 +181,12 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='operation', required=True)
     sub.add_parser('init', help='initialize from verified baseline manifest; never overwrite')
     sub.add_parser('conflicts', help='list durable unresolved findings')
+    sub.add_parser('staged', help='list validated candidates that are not published')
+    stage = sub.add_parser('prepare', help='validate and stage a candidate; does not publish')
+    stage.add_argument('--root', choices=('LEGACY', 'UDIFF'), required=True)
+    stage.add_argument('--relative-path', required=True)
+    stage.add_argument('--date', required=True, help='governed source date YYYY-MM-DD')
+    stage.add_argument('--scan-id', required=True)
     scan = sub.add_parser('inspect', help='classify a candidate; does not process NEW')
     scan.add_argument('--root', choices=('LEGACY', 'UDIFF'), required=True)
     scan.add_argument('--relative-path', required=True)
@@ -196,6 +202,10 @@ def main(argv=None):
             result = initialize(*common)
         elif args.operation == 'conflicts':
             result = conflicts(*common)
+        elif args.operation in ('prepare', 'staged'):
+            from .incremental_staging import prepare, list_staged
+            result = (prepare(*common, args.root, args.relative_path, args.date, args.scan_id)
+                      if args.operation == 'prepare' else list_staged(*common))
         else:
             result = inspect(*common, args.root, args.relative_path, args.date, args.scan_id, json.loads(args.current_bindings))
         print(_json({'result': 'pass', 'data': result}))

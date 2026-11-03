@@ -1,5 +1,8 @@
 # B5: owner authorization and incremental-registry progress
 
+> Subsequent staging work is described in `B5_INCREMENTAL_STAGING_PROGRESS.md`.
+> OW-10 remains incomplete.
+
 ## Decision and status
 
 The owner, acting as Personal Application Principal, explicitly authorized
