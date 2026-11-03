@@ -27,6 +27,7 @@ class TickerDeltaTests(unittest.TestCase):
         payload = dict(selected.payload)
         for key in ('delta', 'evidence', 'w2_delta', 'b2_delta', 'w2_overrides', 'b3_overrides'):
             payload[key] = dict(payload[key].references)
+        payload.pop('derived_trees')
         payload.pop('reference_trees')
         payload.pop('index_tree')
         payload.pop('ticker_proofs_binding')

@@ -59,7 +59,7 @@ def lookup(db, root, key):
     return leaf['value']
 
 
-def insert(db, root, key, value):
+def insert(db, root, key, value, replace=False):
     path = _key_hash(key)
     if not isinstance(value, dict):
         raise ValueError('invalid incremental index tree value')
@@ -73,7 +73,8 @@ def insert(db, root, key, value):
         leaf = _read(db, current, 64)
         if leaf['key'] != key:
             raise ValueError('incremental index tree key hash collision')
-        raise ValueError('incremental index tree key already exists')
+        if not replace:
+            raise ValueError('incremental index tree key already exists')
     text = _json({'format': FORMAT, 'depth': 64, 'key': key, 'value': value})
     current = sha(text); put(db, text, current)
     for depth in range(63, -1, -1):
@@ -134,10 +135,11 @@ def from_overlay(db, delta, candidates):
 
 class ReferenceTree:
     """Mutable transaction-local view of immutable, digest-valued references."""
-    def __init__(self, db, header):
+    def __init__(self, db, header, allow_updates=False):
         validate_reference_header(header)
         self.db = db
         self.header = header
+        self.allow_updates = allow_updates
         self._cache = {}
 
     def __getitem__(self, key):
@@ -160,8 +162,10 @@ class ReferenceTree:
     def __setitem__(self, key, digest):
         if not _digest(digest):
             raise ValueError('invalid reference tree digest')
-        self.header['root'] = insert(self.db, self.header['root'], key, {'digest': digest})
-        self.header['count'] += 1
+        exists = self.get(key) is not None if self.allow_updates else False
+        self.header['root'] = insert(self.db, self.header['root'], key, {'digest': digest}, replace=exists)
+        if not exists:
+            self.header['count'] += 1
         self._cache[key] = digest
 
     def get(self, key, default=None):
@@ -206,6 +210,30 @@ def reference_trees_from_payload(db, payload):
     validate_references(payload)
     trees = {name: {'root': None, 'count': 0} for name in ('delta', 'evidence')}
     for name in ('delta', 'evidence'):
+        view = ReferenceTree(db, trees[name])
+        for key, digest in sorted(payload[name].items()):
+            view[key] = digest
+    return trees
+
+
+DERIVED_NAMES = ('w2_delta', 'b2_delta', 'w2_overrides', 'b3_overrides')
+
+
+def validate_derived_trees(trees):
+    if not isinstance(trees, dict) or set(trees) != set(DERIVED_NAMES):
+        raise ValueError('invalid derived reference tree census')
+    for header in trees.values():
+        validate_reference_header(header)
+    if trees['w2_delta']['count'] > trees['w2_overrides']['count'] or trees['b2_delta']['count'] > trees['b3_overrides']['count']:
+        raise ValueError('derived reference tree count mismatch')
+
+
+def derived_trees_from_payload(db, payload):
+    from .composite_blobs import validate_group_references, validate_override_references
+    validate_group_references(payload)
+    validate_override_references(payload)
+    trees = {name: {'root': None, 'count': 0} for name in DERIVED_NAMES}
+    for name in DERIVED_NAMES:
         view = ReferenceTree(db, trees[name])
         for key, digest in sorted(payload[name].items()):
             view[key] = digest

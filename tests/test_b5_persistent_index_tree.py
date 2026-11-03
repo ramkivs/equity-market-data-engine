@@ -36,6 +36,22 @@ class PersistentTrieUnitTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_reference_update_preserves_prior_root_and_count(self):
+        from serving.persistent_index_map import ReferenceTree, reference_dict
+        db = sqlite3.connect(':memory:')
+        try:
+            schema(db)
+            header = {'root': None, 'count': 0}
+            view = ReferenceTree(db, header, allow_updates=True)
+            view['identity'] = 'a' * 64
+            previous = dict(header)
+            view['identity'] = 'b' * 64
+            self.assertEqual(header['count'], 1)
+            self.assertEqual(reference_dict(db, previous), {'identity': 'a' * 64})
+            self.assertEqual(reference_dict(db, header), {'identity': 'b' * 64})
+        finally:
+            db.close()
+
     def test_content_corruption_and_hidden_paths_are_detected(self):
         db = sqlite3.connect(':memory:')
         try:
@@ -77,7 +93,7 @@ class PersistentIndexPublicationTests(unittest.TestCase):
              mock.patch.object(trie, 'entries', side_effect=AssertionError('prior tree fully scanned')), \
              mock.patch('serving.catalog_publication.materialize_index_tree', side_effect=AssertionError('prior tree fully scanned')):
             second = publish(*self.args)
-        self.assertLessEqual(reads.call_count, 3 * 64)
+        self.assertLessEqual(reads.call_count, 16 * 65)
         current = active_snapshot(self.baseline, self.args[1], self.args[2])
         self.assertNotEqual(current[0].payload['index_tree']['root'], root)
         self.assertEqual(current[0].payload['index_tree']['file_count'], 2)
@@ -106,6 +122,7 @@ class PersistentIndexPublicationTests(unittest.TestCase):
         payload = dict(selected[0].payload)
         for key in ('delta', 'evidence', 'w2_delta', 'b2_delta', 'w2_overrides', 'b3_overrides'):
             payload[key] = dict(payload[key].references)
+        payload.pop('derived_trees')
         payload.pop('reference_trees')
         payload.pop('index_tree'); payload.pop('index'); payload.pop('symbol_catalog')
         payload['format'] = 'catalog-composite/7.0'
@@ -138,6 +155,7 @@ class PersistentIndexPublicationTests(unittest.TestCase):
         payload = dict(selected[0].payload)
         for key in ('delta', 'evidence', 'w2_delta', 'b2_delta', 'w2_overrides', 'b3_overrides'):
             payload[key] = dict(payload[key].references)
+        payload.pop('derived_trees')
         payload.pop('reference_trees')
         payload.pop('index_tree'); payload.pop('index'); payload.pop('symbol_catalog')
         payload['format'] = 'catalog-composite/7.0'

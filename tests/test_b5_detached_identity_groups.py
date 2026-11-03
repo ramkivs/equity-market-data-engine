@@ -29,6 +29,7 @@ class IdentityGroupTests(unittest.TestCase):
         old_hashes = set(p['w2_delta'].references.values()) | set(p['b2_delta'].references.values())
         p['w2_delta'] = dict(p['w2_delta']); p['b2_delta'] = dict(p['b2_delta'])
         p['w2_overrides'] = dict(p['w2_overrides']); p['b3_overrides'] = dict(p['b3_overrides'])
+        p.pop('derived_trees')
         p.pop('reference_trees')
         p.pop('index_tree')
         p.pop('ticker_proofs_binding')
@@ -52,7 +53,8 @@ class IdentityGroupTests(unittest.TestCase):
         before_ref = groups.references[unaffected]; before_rows = groups[unaffected]
         with sqlite3.connect(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT payload FROM composite_generations WHERE id=?', (first['generation'],)).fetchone()[0])
-            self.assertEqual(payload['w2_delta'][unaffected], before_ref)
+            self.assertNotIn('w2_delta', payload)
+            self.assertGreater(payload['derived_trees']['w2_delta']['count'], 0)
             self.assertNotIn(_json(before_rows), _json(payload))
         self.source.unlink(); self.next_delta()
         import serving.catalog_publication as cp
@@ -126,13 +128,13 @@ class IdentityGroupTests(unittest.TestCase):
         self.init(); publish(*self.args)
         with sqlite3.connect(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT g.payload FROM composite_active a JOIN composite_generations g ON g.id=a.generation').fetchone()[0])
-            payload['w2_delta']['INE002A01018'] = 'not-a-digest'
+            payload['derived_trees']['w2_delta']['count'] = -1
             text = _json(payload); digest = _sha(text)
             db.execute('INSERT INTO composite_generations VALUES (?,?)', (digest, text))
             db.execute('UPDATE composite_active SET generation=?', (digest,))
-        with self.assertRaisesRegex(QueryError, 'identity group references'):
+        with self.assertRaisesRegex(QueryError, 'reference tree'):
             execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])
-        with self.assertRaisesRegex(RegistryError, 'identity group references'):
+        with self.assertRaisesRegex(RegistryError, 'reference tree'):
             publish(*self.args)
 
     def test_v2_migration_refuses_misidentified_projection(self):

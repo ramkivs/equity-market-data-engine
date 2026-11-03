@@ -30,6 +30,7 @@ class DetachedOverrideTests(unittest.TestCase):
         hashes = set(payload['w2_overrides'].references.values()) | set(payload['b3_overrides'].references.values())
         for key in ('w2_overrides', 'b3_overrides'):
             payload[key] = dict(payload[key])
+        payload.pop('derived_trees')
         payload.pop('reference_trees')
         payload.pop('index_tree')
         payload.pop('ticker_proofs_binding')
@@ -53,7 +54,8 @@ class DetachedOverrideTests(unittest.TestCase):
         ref = overrides.references[unaffected]; value = overrides[unaffected]
         with sqlite3.connect(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT payload FROM composite_generations WHERE id=?', (first['generation'],)).fetchone()[0])
-            self.assertEqual(payload['w2_overrides'][unaffected], ref)
+            self.assertNotIn('w2_overrides', payload)
+            self.assertGreater(payload['derived_trees']['w2_overrides']['count'], 0)
             self.assertNotIn(_json(value), _json(payload))
         self.source.unlink(); self.next_delta()
         import serving.catalog_publication as cp
