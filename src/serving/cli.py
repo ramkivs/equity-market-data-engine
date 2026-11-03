@@ -115,6 +115,7 @@ def cmd_verify(args) -> int:
         {
             "result": "pass",
             "checks_passed": list(handle.checks_passed),
+            "verification": "metadata-and-on-access" if args.fast else "full",
             "manifest_sha256": handle.manifest_digest,
             "manifest_entries": len(handle.manifest_entries),
             "total_bytes": handle.total_bytes,

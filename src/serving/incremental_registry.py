@@ -184,6 +184,8 @@ def main(argv=None):
     parser.add_argument('--m2', action='store_true', help='verify the package against the qualified M2 pin')
     sub = parser.add_subparsers(dest='operation', required=True)
     sub.add_parser('init', help='initialize from verified baseline manifest; never overwrite')
+    sub.add_parser('bootstrap', help='one-time baseline continuity catalog bootstrap')
+    sub.add_parser('catalog-verify', help='fully verify the baseline continuity catalog')
     sub.add_parser('conflicts', help='list durable unresolved findings')
     sub.add_parser('staged', help='list validated candidates that are not published')
     sub.add_parser('publish', help='publish a bounded Q1-Q5 composite generation')
@@ -202,11 +204,20 @@ def main(argv=None):
     scan.add_argument('--current-bindings', required=True, help='JSON object with engine_sha256, runner_sha256, spec_version, contract_version')
     args = parser.parse_args(argv)
     try:
-        base = open_baseline(args.package, spec=DEFAULT_M2_SPEC if args.m2 else None)
+        from .continuity_catalog import FILENAME as CATALOG_FILENAME
+        first_bootstrap = args.operation == 'bootstrap' and not os.path.lexists(os.path.join(args.state, CATALOG_FILENAME))
+        base = open_baseline(args.package, spec=DEFAULT_M2_SPEC if args.m2 else None,
+                             verify_files=args.operation == 'init' or first_bootstrap)
         common = (base, args.registry, args.state, args.saved_state, args.history_state,
                   {'LEGACY': args.legacy_root, 'UDIFF': args.udiff_root})
         if args.operation == 'init':
             result = initialize(*common)
+        elif args.operation == 'bootstrap':
+            from .continuity_catalog import bootstrap
+            result = bootstrap(base, args.state, args.registry, args.saved_state, args.history_state, common[-1])
+        elif args.operation == 'catalog-verify':
+            from .continuity_catalog import verify_catalog
+            result = verify_catalog(base, args.state)
         elif args.operation == 'conflicts':
             result = conflicts(*common)
         elif args.operation == 'publish':

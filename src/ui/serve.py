@@ -16,8 +16,9 @@ hosting control.
 
 Startup mirrors the established CLI verify → build → query flow:
 
-1. ``serving.baseline.open_baseline`` — the package is verified against its
-   manifests before anything is served (fail closed);
+1. ``serving.baseline.open_baseline`` — the manifest and qualification
+   metadata are checked at startup; manifested files are digest-verified on
+   access. Use ``serving verify`` for explicit full package verification;
 2. the class-(4) index is loaded from the derived-state root; when it is
    missing it is built, and when it is stale it is rebuilt — the delegated
    rebuild operation (D16-11 item (b); deterministic, rebuildable state);
@@ -187,7 +188,7 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
         roots = RootConfiguration(args.package, args.state, args.saved_state, args.history_state)
-        baseline = open_baseline(args.package, spec=DEFAULT_M2_SPEC if args.m2 else None)
+        baseline = open_baseline(args.package, spec=DEFAULT_M2_SPEC if args.m2 else None, verify_files=False)
     except Exception as exc:  # fail closed before binding anything
         print(json.dumps({"result": "fail", "stage": "baseline", "detail": str(exc)}, sort_keys=True), flush=True)
         return 3
