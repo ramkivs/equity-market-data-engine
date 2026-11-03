@@ -28,6 +28,7 @@ class IndexOverlayTests(unittest.TestCase):
         payload = dict(selected.payload)
         for key in ('delta', 'evidence', 'w2_delta', 'b2_delta', 'w2_overrides', 'b3_overrides'):
             payload[key] = dict(payload[key].references)
+        payload.pop('index_tree')
         payload.pop('ticker_proofs_binding'); payload.pop('index_delta'); payload.pop('symbol_catalog')
         payload['format'] = 'catalog-composite/5.0'
         text = _json(payload); generation = _sha(text)
@@ -44,8 +45,9 @@ class IndexOverlayTests(unittest.TestCase):
         with sqlite3.connect(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT payload FROM composite_generations WHERE id=?', (first['generation'],)).fetchone()[0])
         self.assertNotIn('index', payload)
-        self.assertEqual(len(payload['index_delta']['files']), 1)
-        self.assertFalse(set(base['files']) & set(payload['index_delta']['files']))
+        self.assertNotIn('index_delta', payload)
+        self.assertEqual(payload['index_tree']['file_count'], 1)
+        self.assertFalse(set(base['files']) & set(old[0].payload['index_delta']['files']))
         self.assertEqual(old[1]['counts']['row_count'], base['counts']['row_count'] + old[0].payload['candidates'][0]['rows'])
         self.source.unlink(); self.next_delta()
         path = type(self.baseline).path
@@ -112,11 +114,11 @@ class IndexOverlayTests(unittest.TestCase):
         self.init(); publish(*self.args)
         with sqlite3.connect(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT g.payload FROM composite_active a JOIN composite_generations g ON g.id=a.generation').fetchone()[0])
-            payload['index_delta']['files'].pop(next(iter(payload['index_delta']['files'])))
+            payload['index_tree']['file_count'] += 1
             text = _json(payload); bad_id = _sha(text)
             db.execute('INSERT INTO composite_generations VALUES (?,?)', (bad_id, text))
             db.execute('UPDATE composite_active SET generation=?', (bad_id,))
-        with self.assertRaisesRegex(QueryError, 'index.*census mismatch'):
+        with self.assertRaisesRegex(QueryError, 'index.*census'):
             execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])
-        with self.assertRaisesRegex(RegistryError, 'index.*census mismatch'):
+        with self.assertRaisesRegex(RegistryError, 'index.*census'):
             publish(*self.args)

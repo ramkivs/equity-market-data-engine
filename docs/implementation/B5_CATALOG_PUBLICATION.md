@@ -54,7 +54,7 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
 
 ## Scope limits — no B5 completion claim
 
-* Catalog-backed generation format 7 stores incremental canonical rows and
+* Catalog-backed generation format 8 stores incremental canonical rows and
   evidence once as content-addressed SQLite blobs. Later publications refer to
   existing blobs without reading or copying their contents. Readers verify each
   accessed blob against its generation-pinned digest; old blobs remain available
@@ -70,7 +70,8 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   composite indexes to format 6 after checking the baseline portion and
   reconstructing delta file metadata and flags from verified retained deltas.
   A format-6 generation migrates its binding to format 7 without replaying
-  its prior incremental rows or source archives.
+  its prior incremental rows or source archives. Format-7 index overlays migrate
+  to an immutable content-addressed trie in the publication transaction.
 * W2 and B2 incremental projections are stored as content-addressed per-identity
   groups. Later publication reads and rewrites only groups affected by the new
   rows or ticker ambiguity; unaffected group contents are not copied or read.
@@ -93,14 +94,17 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   `ticker-proof-recover` registry command can recreate a missing file only if
   its calculated binding matches the active generation, and never overwrites
   an existing file.
-* Generation JSON stores only incremental index file metadata and flag counts,
-  bound to the separately verified baseline index. Publication updates that
-  overlay without copying or recomposing the full baseline index. Readers
-  reconstruct the existing complete index contract (including partition and
-  distinct-instrument counts) from baseline metadata and the pinned overlay.
-* This is **not yet fully delta-only**: the incremental index file metadata,
-  ticker census, candidate references, and identity-group and override reference
-  maps remain together in each generation JSON. Publication still validates
+* Incremental index file metadata is stored in an immutable SHA-256 trie;
+  generation JSON pins its root, file/row counts, and flag census. Publication
+  writes only paths for new files rather than copying existing file metadata
+  or recomposing the baseline index. Readers traverse and verify the pinned
+  trie, validate its candidate/file census, then reconstruct the complete index
+  contract including partition and distinct-instrument counts. Old trie nodes
+  remain available to in-flight readers; this implementation does not yet
+  garbage-collect superseded nodes.
+* This is **not yet fully delta-only**: the incremental ticker census,
+  candidate references, and identity-group and override reference maps remain
+  together in each generation JSON. Publication still validates
   and scans the compact ticker-group manifest, and copies/serializes accumulated
   incremental structures; targeted lookups also filter the incremental ticker
   census. Readers still compose and scan the complete index metadata, though
@@ -162,7 +166,7 @@ This exceeds the former total 20,000-row guard, but is **not** an M2-scale test
 or a resource claim for approximately 5.7 million rows. No qualified M2 data was
 accessed or modified, and no historical archive was ingested.
 
-Linux disposable-fixture suite: **1061 tests run, 14 skipped**; existing
+Linux disposable-fixture suite: **1067 tests run, 14 skipped**; existing
 unrelated ResourceWarnings remain. Windows validation remains pending.
 
 The scoped-reader tests exercise calendar gap/holiday preservation, UDiFF date
@@ -221,3 +225,9 @@ and readers with full baseline ticker-census access blocked after bootstrap,
 miskeyed and corrupt groups, proof loss and explicit recovery, full verification,
 and transactional format-6 migration. The proof bootstrap reads the compact
 existing ticker census once; it does not read the qualified canonical rows.
+
+`tests/test_b5_persistent_index_tree.py` covers changed-path-only trie writes,
+immutable old roots, corruption detection, selected reader and publisher
+integration, and transactional format-7 migration with and without pending
+inputs. Reader snapshot construction still traverses the entire incremental
+index trie; tests are disposable fixtures, not an M2-scale resource claim.
