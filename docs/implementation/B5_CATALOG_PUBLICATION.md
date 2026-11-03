@@ -54,14 +54,20 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
 
 ## Scope limits — no B5 completion claim
 
-* Catalog-backed generations currently store the baseline serving index, compact
-  ticker census, and **all previously published incremental rows, projections,
-  evidence and overrides** in one checksummed SQLite JSON payload. Each later
-  publication loads, copies and serializes that accumulated delta snapshot.
-  Only pending staged rows are revalidated and only affected W2/B3 identities
-  are re-derived, but prior delta state is still rematerialized. Large or many
-  accumulated deltas may exhaust memory or hit SQLite's single-value limit;
-  this implementation has not established a scalable long-running lifecycle.
+* Catalog-backed generation format 2 stores incremental canonical rows and
+  evidence once as content-addressed SQLite blobs. Later publications refer to
+  existing blobs without reading or copying their contents. Readers verify each
+  accessed blob against its generation-pinned digest; old blobs remain available
+  to in-flight readers. The active pointer, new blobs, new accepted records and
+  generation commit in the same transaction. Existing format-1 catalog composites
+  migrate once from their retained inline deltas, with digest/accepted checks and
+  no historical canonical or accepted source archive reads.
+* This is **not yet fully delta-only**: the baseline serving index, compact
+  ticker census, candidate references, accumulated delta identity projections,
+  and W2/B3 overrides remain together in each generation JSON. Publication
+  still copies and serializes these accumulated structures, and recomputes
+  index summary counts. Very large or numerous deltas can still hit memory or
+  SQLite single-value limits. No scalable long-running lifecycle is established.
 * The original qualified historical canonical baseline is not reread during
   catalog-backed publication. Q3/Q4 still scan candidate historical row files
   to serve a query, and Q5 streams the original W2 association file; these are
@@ -118,7 +124,7 @@ This exceeds the former total 20,000-row guard, but is **not** an M2-scale test
 or a resource claim for approximately 5.7 million rows. No qualified M2 data was
 accessed or modified, and no historical archive was ingested.
 
-Linux disposable-fixture suite: **1028 tests run, 14 skipped**; existing
+Linux disposable-fixture suite: **1034 tests run, 14 skipped**; existing
 unrelated ResourceWarnings remain. Windows validation remains pending.
 
 The scoped-reader tests exercise calendar gap/holiday preservation, UDiFF date
@@ -142,3 +148,9 @@ legacy adoption, staged/published evidence validation, no historical canonical
 reads, missing-binding detection and repair, conflicting locations, interruption,
 and preservation of registry contents. It does not establish where any real
 user registry is located.
+
+`tests/test_b5_detached_delta.py` checks immutable-blob reuse, old-reader pins,
+on-access row/evidence corruption, reference mismatch, inline-generation
+migration with and without pending inputs, rollback/retry, missing old source
+archives, and blocking historical canonical reads during migration. It does not
+prove the remaining accumulated projection/index structures scale to M2.

@@ -6,6 +6,7 @@ An incomplete or mismatched binding fails closed; it is not a generation pointer
 import hashlib
 import json
 import os
+from collections.abc import Mapping
 
 from .paths import resolved, validate_roots
 from .query import QueryError
@@ -17,6 +18,33 @@ FORMAT = 'composite-registry-binding/1.0'
 
 def has_binding(state_root):
     return any(os.path.lexists(os.path.join(state_root, name)) for name in (BINDING_FILE, GUARD_FILE))
+
+
+def validate_inline_payload(db, baseline, payload):
+    """Check old inline accepted evidence before moving it into immutable blobs."""
+    from .incremental_drafts import _validate
+    candidates, delta, evidence = payload.get('candidates'), payload.get('delta'), payload.get('evidence')
+    if not isinstance(candidates, list) or not isinstance(delta, dict) or not isinstance(evidence, dict):
+        raise ValueError('invalid inline generation evidence')
+    accepted = {}
+    for name, date, digest, text in db.execute('SELECT file_name,date,digest,record FROM accepted'):
+        entry = json.loads(text)
+        if entry.get('publication_kind') == 'composite':
+            key = (name, date, digest)
+            if (entry.get('file_name'), entry.get('date'), entry.get('digest')) != key:
+                raise ValueError('inline accepted registry identity mismatch')
+            accepted[key] = entry
+    sources, digests, identities = set(), set(), set()
+    for item in candidates:
+        key = (item['file_name'], item['date'], item['digest'])
+        source = 'incremental/' + item['digest'] + '.rows.jsonl'
+        entry = accepted.get(key)
+        if key in identities or item['digest'] in digests or entry is None or any(entry.get(k) != v for k, v in item.items()):
+            raise ValueError('inline accepted input mismatch')
+        _validate(item, delta[source], evidence[item['digest']], baseline)
+        identities.add(key); sources.add(source); digests.add(item['digest'])
+    if identities != set(accepted) or sources != set(delta) or digests != set(evidence):
+        raise ValueError('inline generation evidence census mismatch')
 
 
 def validate_registry(baseline, state_root, registry_root):
@@ -73,7 +101,7 @@ def validate_registry(baseline, state_root, registry_root):
             selected = snapshot[0]
             candidates = selected.payload.get('candidates')
             delta, evidence = selected.payload.get('delta'), selected.payload.get('evidence')
-            if not isinstance(candidates, list) or not isinstance(delta, dict) or not isinstance(evidence, dict):
+            if not isinstance(candidates, list) or not isinstance(delta, Mapping) or not isinstance(evidence, Mapping):
                 raise ValueError('active generation evidence is invalid')
             identities, sources, digests = set(), set(), set()
             for item in candidates:

@@ -1,8 +1,8 @@
 """Catalog-backed atomic publication for the selected composite application.
 
 Only pending candidates and catalog observations for affected identities are
-parsed. Generations are still self-contained JSON snapshots of all incremental
-inputs (not of baseline rows); their accumulated delta size is a known limit.
+parsed. Canonical delta rows and evidence are detached immutable blobs. Compact
+metadata, projections and derived state remain in the generation JSON.
 """
 import copy
 import json
@@ -20,8 +20,10 @@ from .incremental_drafts import _validate
 from .index import load_index
 from .symbols import _identity, observed_trading_symbol
 from .w2_continuity import build_continuity
+from .composite_blobs import put as put_blob, schema as blob_schema, validate_references
 
-FORMAT_ID = 'catalog-composite/1.0'
+LEGACY_FORMAT_ID = 'catalog-composite/1.0'
+FORMAT_ID = 'catalog-composite/2.0'
 MAX_PENDING_BYTES = 128 * 1024 * 1024
 MAX_PENDING_ROWS = 20000
 
@@ -106,18 +108,37 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                 if _sha(previous[1]) != previous[0]:
                     raise RegistryError('active composite digest mismatch')
                 payload = json.loads(previous[1])
-                if payload.get('format') not in (FORMAT_ID, 'bounded-composite/1.0'):
+                if payload.get('format') not in (FORMAT_ID, LEGACY_FORMAT_ID, 'bounded-composite/1.0'):
                     raise RegistryError('unknown active composite format')
                 if payload.get('baseline_manifest_sha256') != baseline.manifest_digest or payload.get('baseline_index_sha256') != index_hash:
                     raise RegistryError('active composite baseline/index mismatch')
-                if payload.get('format') == FORMAT_ID and payload.get('catalog_binding') != meta:
+                if payload.get('format') in (FORMAT_ID, LEGACY_FORMAT_ID) and payload.get('catalog_binding') != meta:
                     raise RegistryError('active composite catalog mismatch')
+                if payload.get('format') == FORMAT_ID:
+                    validate_references(payload)
             migrating = previous is not None and payload.get('format') == 'bounded-composite/1.0'
-            if not staged and not migrating:
+            migrate_blobs = previous is not None and payload.get('format') == LEGACY_FORMAT_ID
+            if not staged and not migrating and not migrate_blobs:
                 if previous is None:
                     raise RegistryError('no new records or prior generation')
                 db.commit()
                 return {'status': 'UNCHANGED', 'generation': previous[0]}
+            blob_schema(db)
+            if migrate_blobs:
+                # One-time migration of the old inline deltas; the source
+                # archives and historical canonical baseline are not read.
+                from .composite_binding import validate_inline_payload
+                validate_inline_payload(db, baseline, payload)
+                for candidate in payload['candidates']:
+                    source = 'incremental/' + candidate['digest'] + '.rows.jsonl'
+                    rows_text, ev = payload['delta'][source], payload['evidence'][candidate['digest']]
+                    put_blob(db, rows_text, candidate['rows_sha256'])
+                    put_blob(db, ev, candidate['evidence_sha256'])
+                    payload['delta'][source] = candidate['rows_sha256']
+                    payload['evidence'][candidate['digest']] = candidate['evidence_sha256']
+                payload['format'] = FORMAT_ID
+            if previous and payload.get('format') == FORMAT_ID:
+                validate_references(payload)
             bounded = payload if migrating else None
             if previous and not migrating:
                 payload = copy.deepcopy(payload)
@@ -218,8 +239,10 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                 part['row_files'] += 1; part['row_count'] += len(rows)
                 for name, count in flags.items():
                     composite_index['flag_census'][name] = composite_index['flag_census'].get(name, 0) + count
-                payload['delta'][source] = rows_text
-                payload['evidence'][rec['digest']] = evidence
+                put_blob(db, rows_text, rec['rows_sha256'])
+                put_blob(db, evidence, rec['evidence_sha256'])
+                payload['delta'][source] = rec['rows_sha256']
+                payload['evidence'][rec['digest']] = rec['evidence_sha256']
                 payload['candidates'].append(rec)
             if migrating and not new:
                 verify_carried_index()
@@ -254,7 +277,7 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                 db.execute('INSERT INTO accepted VALUES (?,?,?,?)', (rec['file_name'], rec['date'], rec['digest'], _json(entry)))
             db.execute('INSERT INTO composite_active VALUES (1,?) ON CONFLICT(singleton) DO UPDATE SET generation=excluded.generation', (generation,))
             db.commit()
-            return {'status': 'PUBLISHED', 'generation': generation, 'new_inputs': len(new), 'migrated_bounded_generation': previous[0] if migrating else None, 'row_count': composite_index['counts']['row_count']}
+            return {'status': 'PUBLISHED', 'generation': generation, 'new_inputs': len(new), 'migrated_bounded_generation': previous[0] if migrating else None, 'migrated_inline_generation': previous[0] if migrate_blobs else None, 'row_count': composite_index['counts']['row_count']}
         except (sqlite3.Error, ValueError, KeyError, TypeError) as exc:
             if isinstance(exc, RegistryError):
                 raise
