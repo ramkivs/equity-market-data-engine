@@ -78,6 +78,8 @@ class StatusTests(UiApiBase):
         self.assertFalse(document["m2"])
         self.assertIsNone(document["repo_root"])
         self.assertEqual(len(document["query_modes"]), 10)
+        self.assertEqual(document['registry_binding']['status'], 'location-not-identified')
+        self.assertEqual(document['registry_binding']['scope'], 'baseline-only')
 
     def test_status_method_only_get(self):
         status, _ = self.dispatch("POST", "/api/status")

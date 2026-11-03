@@ -66,8 +66,22 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   catalog-backed publication. Q3/Q4 still scan candidate historical row files
   to serve a query, and Q5 streams the original W2 association file; these are
   query reads, not historical archive ingestion or publication replay.
-* Existing unbound registry discovery and migration remain incomplete; a
-  completely missing binding is still indistinguishable from never-bound state.
+* An existing unbound registry is not discoverable from the package/state
+  alone. No filesystem search or location guess is performed. UI status explicitly
+  reports `location-not-identified` and baseline-only scope when neither binding
+  nor guard exists; this cannot prove that no unbound registry exists. Supply a
+  known registry path with the registry CLI `bind` operation or UI `--registry`.
+  Explicit binding validates the baseline accepted manifest records, existing
+  staged and published delta evidence, active generation and D21 identities;
+  it never replaces or deletes registry records. It does not read historical
+  canonical rows or source archives. It refuses inconsistent or missing state.
+  A separate checksummed guard is created before the binding; if the binding
+  disappears while the guard remains, readers fail closed and explicit binding
+  of the same validated registry repairs it. This protects against one missing
+  file and interrupted creation, not simultaneous deletion of both files or a
+  hostile coordinated rewrite. Pre-guard installations acquire a guard at the
+  next explicit binding or publication; until then missing legacy bindings
+  remain indistinguishable from never-bound state.
 * Q6 overlays incremental file presence on the qualified calendar without
   replacing sourced labels or explaining unknown days. If the qualified W2
   calendar is absent, Q6 explicitly labels a presence-only reconstruction from
@@ -104,7 +118,7 @@ This exceeds the former total 20,000-row guard, but is **not** an M2-scale test
 or a resource claim for approximately 5.7 million rows. No qualified M2 data was
 accessed or modified, and no historical archive was ingested.
 
-Linux disposable-fixture suite: **1023 tests run, 14 skipped**; existing
+Linux disposable-fixture suite: **1028 tests run, 14 skipped**; existing
 unrelated ResourceWarnings remain. Windows validation remains pending.
 
 The scoped-reader tests exercise calendar gap/holiday preservation, UDiFF date
@@ -112,3 +126,19 @@ observations, D21 request pinning, original versus incremental provenance,
 saved/history execution, and both bounded and catalog-backed selections. The
 holiday preservation check uses synthetic mocked calendar evidence; it is not
 a validation against the qualified M2 package.
+
+### Explicit existing-registry binding
+
+Run `python -m serving.incremental_registry` with the existing complete
+`--package`, `--registry`, `--state`, `--saved-state`, `--history-state`,
+`--legacy-root` and `--udiff-root` arguments, followed by `bind`. The operation
+validates the explicitly named registry and reports active generation and
+accepted/staged counts. It neither initializes a missing registry nor chooses
+among potential locations. A known prior location is necessary; an unknown or
+ambiguous location requires user identification, not automatic replacement.
+
+`tests/test_b5_registry_binding.py` uses disposable registries to cover explicit
+legacy adoption, staged/published evidence validation, no historical canonical
+reads, missing-binding detection and repair, conflicting locations, interruption,
+and preservation of registry contents. It does not establish where any real
+user registry is located.

@@ -184,6 +184,7 @@ def main(argv=None):
     parser.add_argument('--m2', action='store_true', help='verify the package against the qualified M2 pin')
     sub = parser.add_subparsers(dest='operation', required=True)
     sub.add_parser('init', help='initialize from verified baseline manifest; never overwrite')
+    sub.add_parser('bind', help='validate and bind an explicitly configured existing registry; never replace data')
     sub.add_parser('bootstrap', help='one-time baseline continuity catalog bootstrap')
     sub.add_parser('catalog-verify', help='fully verify the baseline continuity catalog')
     sub.add_parser('catalog-upgrade', help='upgrade a verified continuity catalog with identity proofs')
@@ -213,6 +214,10 @@ def main(argv=None):
                   {'LEGACY': args.legacy_root, 'UDIFF': args.udiff_root})
         if args.operation == 'init':
             result = initialize(*common)
+        elif args.operation == 'bind':
+            from .composite_binding import ensure_registry_binding
+            _db_path(*common)  # validate the complete configured root layout
+            result = ensure_registry_binding(base, args.state, args.registry)
         elif args.operation == 'bootstrap':
             from .continuity_catalog import bootstrap
             result = bootstrap(base, args.state, args.registry, args.saved_state, args.history_state, common[-1])

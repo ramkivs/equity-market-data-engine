@@ -588,7 +588,8 @@ def cmd_info(args) -> int:
         _print_json({"result": "fail", "detail": "no serving state at %s" % args.state})
         return 3
     output = {"result": "pass", **state}
-    if os.path.lexists(os.path.join(args.state, 'composite_registry.json')):
+    from .composite_binding import has_binding
+    if has_binding(args.state):
         output['scope'] = 'baseline index metadata only; a composite generation may be selected'
     _print_json(output)
     return 0

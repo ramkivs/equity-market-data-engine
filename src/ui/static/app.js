@@ -493,6 +493,7 @@ function renderRunSummary() {
     kvRow("Engine", engine.tool_name ? engine.tool_name + " " + (engine.tool_version || "") : null) +
     kvRow("Corpus", corpus.archive_count !== undefined ? fmtInt(corpus.archive_count) + " archives" : null) +
     kvRow("Package files", manifests.file_count !== undefined ? fmtInt(manifests.file_count) + " (" + fmtBytes(manifests.total_bytes || 0) + ")" : null) +
+    (S.server && S.server.registry_binding ? kvRow("Registry", S.server.registry_binding.detail || S.server.registry_binding.scope) : "") +
     dashFailureHtml(d.errors, true);
 }
 

@@ -11,31 +11,104 @@ from .paths import resolved, validate_roots
 from .query import QueryError
 
 BINDING_FILE = 'composite_registry.json'
+GUARD_FILE = 'composite_registry_guard.json'
 FORMAT = 'composite-registry-binding/1.0'
 
 
 def has_binding(state_root):
-    return os.path.lexists(os.path.join(state_root, BINDING_FILE))
+    return any(os.path.lexists(os.path.join(state_root, name)) for name in (BINDING_FILE, GUARD_FILE))
+
+
+def validate_registry(baseline, state_root, registry_root):
+    """Validate an explicitly identified registry without modifying its data.
+
+    Checks baseline manifest and retained staged/published evidence, not source
+    archives or historical canonical rows. Hold the registry write lock while
+    validating so publication cannot change it between checks.
+    """
+    from .incremental_registry import DB_NAME, _open, _manifest_entries
+    from .incremental_drafts import _validate
+    from .incremental_publication import active_snapshot
+    path = os.path.join(registry_root, DB_NAME)
+    db = None
+    try:
+        db, _ = _open(baseline, path)
+        db.execute('BEGIN IMMEDIATE')
+        expected = {(r['file_name'], r['date_from_filename'], r['archive_sha256_observed_raw_bytes']): r
+                    for r in _manifest_entries(baseline)}
+        accepted = {}
+        for name, date, digest, text in db.execute('SELECT file_name,date,digest,record FROM accepted'):
+            record = json.loads(text)
+            identity = (name, date, digest)
+            if not isinstance(record, dict):
+                raise ValueError('invalid accepted record')
+            if record.get('publication_kind') == 'composite':
+                if (record.get('file_name'), record.get('date'), record.get('digest')) != identity:
+                    raise ValueError('accepted composite identity mismatch')
+                accepted[identity] = record
+            else:
+                if identity not in expected or record != expected.pop(identity):
+                    raise ValueError('baseline accepted record does not match input manifest')
+        if expected:
+            raise ValueError('baseline accepted records missing from registry')
+        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        staged_count = 0
+        if 'staged_candidates' in tables:
+            for name, date, digest, text, rows, evidence in db.execute('SELECT file_name,date,digest,record,rows,evidence FROM staged_candidates'):
+                record = json.loads(text)
+                if (record.get('file_name'), record.get('date'), record.get('digest')) != (name, date, digest):
+                    raise ValueError('staged record identity mismatch')
+                _validate(record, rows, evidence, baseline)
+                staged_count += 1
+        for name, date, digest, text in db.execute('SELECT file_name,date,digest,record FROM conflicts'):
+            record = json.loads(text)
+            if (record.get('file_name'), record.get('date'), record.get('sha256')) != (name, date, digest) or record.get('status') != 'CHANGED-CONFLICT-UNRESOLVED':
+                raise ValueError('D21 conflict identity mismatch')
+        snapshot = active_snapshot(baseline, registry_root, state_root)
+        if snapshot is None:
+            if accepted:
+                raise ValueError('published accepted entries lack an active generation')
+            generation = None
+        else:
+            selected = snapshot[0]
+            candidates = selected.payload.get('candidates')
+            delta, evidence = selected.payload.get('delta'), selected.payload.get('evidence')
+            if not isinstance(candidates, list) or not isinstance(delta, dict) or not isinstance(evidence, dict):
+                raise ValueError('active generation evidence is invalid')
+            identities, sources, digests = set(), set(), set()
+            for item in candidates:
+                identity = (item['file_name'], item['date'], item['digest'])
+                source = 'incremental/' + item['digest'] + '.rows.jsonl'
+                entry = accepted.get(identity)
+                if identity in identities or item['digest'] in digests or entry is None or any(entry.get(k) != v for k, v in item.items()):
+                    raise ValueError('active generation disagrees with accepted registry')
+                _validate(item, delta[source], evidence[item['digest']], baseline)
+                identities.add(identity); sources.add(source); digests.add(item['digest'])
+            if identities != set(accepted) or set(delta) != sources or set(evidence) != digests:
+                raise ValueError('active generation has missing or extra accepted evidence')
+            generation = selected.manifest_digest
+        return {'generation': generation, 'accepted_incremental': len(accepted), 'staged': staged_count}
+    except Exception as exc:
+        raise QueryError('composite-unavailable', 'cannot bind explicitly configured registry: %s' % exc) from exc
+    finally:
+        if db is not None:
+            db.close()
 
 
 def ensure_registry_binding(baseline, state_root, registry_root):
-    if not os.path.isfile(os.path.join(registry_root, 'source_registry.sqlite3')):
-        raise QueryError('composite-unavailable', 'registry missing; initialize it before binding')
-    from .incremental_registry import DB_NAME, _open
-    try:
-        db, _ = _open(baseline, os.path.join(registry_root, DB_NAME))
-        db.close()
-    except Exception as exc:
-        raise QueryError('composite-unavailable', 'cannot bind registry: %s' % exc) from exc
-    ensure_binding(baseline, state_root, registry_root)
+    """Validate and explicitly bind or repair a known registry, without guessing."""
+    validate_roots(package=baseline.root, state=state_root, registry=registry_root)
+    facts = validate_registry(baseline, state_root, registry_root)
+    ensure_binding(baseline, state_root, registry_root, allow_repair=True)
+    return facts
 
 
-def read_binding(baseline, state_root):
-    path = os.path.join(state_root, BINDING_FILE)
+def _read_file(baseline, state_root, name):
+    path = os.path.join(state_root, name)
     if not os.path.lexists(path):
         return None
     if os.path.islink(path) or not os.path.isfile(path):
-        raise QueryError('composite-unavailable', 'unsafe composite registry binding')
+        raise QueryError('composite-unavailable', 'unsafe composite registry binding or guard')
     try:
         with open(path, encoding='utf8') as f:
             text = f.read(8193)
@@ -57,40 +130,54 @@ def read_binding(baseline, state_root):
         raise QueryError('composite-unavailable', 'invalid composite registry binding: %s' % exc) from exc
 
 
+def read_binding(baseline, state_root):
+    binding = _read_file(baseline, state_root, BINDING_FILE)
+    guard = _read_file(baseline, state_root, GUARD_FILE)
+    if binding is None and guard is not None:
+        raise QueryError('composite-unavailable', 'registry binding missing; explicitly rebind the previously configured registry')
+    if binding is not None and guard is not None and binding != guard:
+        raise QueryError('composite-unavailable', 'registry binding and guard disagree')
+    return binding
+
+
 def _binding_digest(doc):
     raw = json.dumps(doc, sort_keys=True, separators=(',', ':')).encode('utf8')
     return hashlib.sha256(raw).hexdigest()
 
 
-def ensure_binding(baseline, state_root, registry_root):
-    """Persist an immutable binding; interrupted creation is left fail-closed."""
+def ensure_binding(baseline, state_root, registry_root, allow_repair=False):
+    """Persist immutable matching binding and guard; never overwrite either."""
     registry = resolved(registry_root)
     validate_roots(package=baseline.root, state=state_root, registry=registry)
-    previous = read_binding(baseline, state_root)
-    if previous is not None:
-        if previous != registry:
-            raise QueryError('composite-unavailable', 'serving state already bound to a different registry')
-        return
+    binding = _read_file(baseline, state_root, BINDING_FILE)
+    guard = _read_file(baseline, state_root, GUARD_FILE)
+    if (binding is not None and binding != registry) or (guard is not None and guard != registry):
+        raise QueryError('composite-unavailable', 'serving state already bound to a different registry')
+    if binding is None and guard is not None and not allow_repair:
+        raise QueryError('composite-unavailable', 'registry binding missing; explicitly rebind the previously configured registry')
     doc = {'format': FORMAT, 'baseline_manifest_sha256': baseline.manifest_digest, 'registry_root': registry}
     doc['binding_sha256'] = _binding_digest(doc)
     content = json.dumps(doc, sort_keys=True, separators=(',', ':')) + '\n'
-    path = os.path.join(state_root, BINDING_FILE)
-    try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        if read_binding(baseline, state_root) != registry:
-            raise QueryError('composite-unavailable', 'serving state already bound to a different registry')
-        return
-    with os.fdopen(fd, 'w', encoding='utf8', newline='') as f:
-        f.write(content)
-        f.flush()
-        os.fsync(f.fileno())
-    if os.name == 'posix':
-        fd = os.open(state_root, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
+    # Guard first: interruption cannot silently revert a newly bound state to
+    # baseline-only. Explicit rebinding can finish an interrupted operation.
+    for name in (GUARD_FILE, BINDING_FILE):
+        path = os.path.join(state_root, name)
         try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            if _read_file(baseline, state_root, name) != registry:
+                raise QueryError('composite-unavailable', 'serving state already bound to a different registry')
+            continue
+        with os.fdopen(fd, 'w', encoding='utf8', newline='') as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        if os.name == 'posix':
+            fd = os.open(state_root, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
 
 
 def selected_snapshot(baseline, state_root):

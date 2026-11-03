@@ -194,6 +194,10 @@ class UiApi:
             selected = self._composite()
             document['composite'] = {'generation': selected[0].manifest_digest if selected else None,
                                      'supported_query_modes': list(QUERY_MODES)}
+            document['registry_binding'] = {'status': 'configured', 'scope': 'selected-generation' if selected else 'baseline-only-no-published-generation'}
+        else:
+            document['registry_binding'] = {'status': 'location-not-identified', 'scope': 'baseline-only',
+                'detail': 'No registry binding is configured; an existing unbound registry cannot be located or excluded. Supply its known path explicitly to bind; no locations are guessed.'}
         return document
 
     # ------------------------------------------------------------------ query
