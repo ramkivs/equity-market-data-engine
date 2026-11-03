@@ -53,7 +53,7 @@ def build_symbol_catalog(baseline, index):
     """
     observations = {}
     for relative in index.get('files', {}):
-        with open(baseline.path(relative), encoding='utf-8') as handle:
+        with (baseline.open_text(relative) if hasattr(baseline, 'open_text') else open(baseline.path(relative), encoding='utf-8')) as handle:
             for line in handle:
                 if not line.strip():
                     continue

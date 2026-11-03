@@ -11,6 +11,12 @@ _lock = Lock()
 
 
 def get_continuity(baseline, index):
+    if hasattr(baseline, 'payload'):
+        document = baseline.payload['b3']
+        groups = {}
+        for group in document['identities']:
+            groups.setdefault(group['security_id'], []).append(group)
+        return {'format': FORMAT, 'baseline_manifest_sha256': document['baseline_manifest_sha256'], 'availability': 'available', 'reason': None}, groups
     count = index.get('counts', {}).get('row_count') if isinstance(index, dict) else None
     info = {'format': FORMAT, 'baseline_manifest_sha256': baseline.manifest_digest}
     if type(count) is not int or count < 0 or count > MAX_AUTOMATIC_ROWS:

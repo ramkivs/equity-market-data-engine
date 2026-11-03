@@ -1,5 +1,8 @@
 # B5 composite draft work — not a publication or closure
 
+> Subsequent bounded application integration is described in
+> `B5_BOUNDED_COMPOSITE_APPLICATION.md`; B5 remains open.
+
 Continues from `e057af0` under the recorded owner authorization. The existing
 staging and D21 registry remain in place. **B5/OW-10 is not complete and is
 not closed.**

@@ -145,7 +145,9 @@ def inspect(baseline, registry_root, state, saved, history, source_roots, root, 
                   'current_bindings': current_bindings, 'prior_bindings': meta['bindings']}
         if old and old[0] != digest:
             prior = json.loads(old[1])
-            result.update(status='CHANGED-CONFLICT-UNRESOLVED', prior=prior, prior_run_id=meta['baseline_run_id'], prior_manifest_sha256=baseline.manifest_digest)
+            result.update(status='CHANGED-CONFLICT-UNRESOLVED', prior=prior,
+                          prior_run_id=prior.get('run_id', meta['baseline_run_id']),
+                          prior_manifest_sha256=prior.get('generation', baseline.manifest_digest))
             # Preserve first-observed provenance; repeats do not overwrite it.
             db.execute('INSERT OR IGNORE INTO conflicts VALUES (?,?,?,?)', (name, date, digest, _json(result)))
         elif old:
@@ -183,6 +185,7 @@ def main(argv=None):
     sub.add_parser('init', help='initialize from verified baseline manifest; never overwrite')
     sub.add_parser('conflicts', help='list durable unresolved findings')
     sub.add_parser('staged', help='list validated candidates that are not published')
+    sub.add_parser('publish', help='publish a bounded Q1-Q5 composite generation')
     sub.add_parser('draft', help='capture an isolated, non-serveable draft snapshot')
     sub.add_parser('drafts', help='list non-serveable draft snapshots')
     stage = sub.add_parser('prepare', help='validate and stage a candidate; does not publish')
@@ -205,6 +208,9 @@ def main(argv=None):
             result = initialize(*common)
         elif args.operation == 'conflicts':
             result = conflicts(*common)
+        elif args.operation == 'publish':
+            from .incremental_publication import publish
+            result = publish(*common)
         elif args.operation in ('draft', 'drafts'):
             from .incremental_drafts import create_draft, list_drafts
             result = create_draft(*common) if args.operation == 'draft' else list_drafts(*common)

@@ -44,7 +44,7 @@ from serving.history import (
 )
 from serving.index import ServingIndexError, canonical_json
 from serving.query import QueryError
-from serving.paths import RootConfiguration, repository_root, resolved, RootLayoutError
+from serving.paths import RootConfiguration, repository_root, resolved, RootLayoutError, validate_roots
 from serving.saved import (
     SAVED_DIGEST_FILENAME,
     SAVED_FILENAME,
@@ -128,6 +128,7 @@ class UiApi:
         m2: bool = False,
         repo_root: Optional[str] = None,
         root_config: Optional[RootConfiguration] = None,
+        registry_root: Optional[str] = None,
     ) -> None:
         supplied = {"package": resolved(baseline.root), "state": resolved(state_root),
                     "saved": resolved(saved_root), "history": resolved(history_root)}
@@ -140,19 +141,36 @@ class UiApi:
         self._saved_root = resolved(saved_root)
         self._history_root = resolved(history_root)
         self._m2 = m2
+        self._registry_input = os.path.abspath(registry_root) if registry_root is not None else None
+        self._registry_root = resolved(registry_root) if registry_root is not None else None
         self._repo_root = repository_root(repo_root) if repo_root is not None else None
         # serialize store mutations (saved/history) across handler threads
         self._lock = threading.Lock()
+        self._validate_layout()
 
     def _validate_layout(self):
         self._root_config.validate()
+        if self._registry_root is not None:
+            if resolved(self._registry_input) != self._registry_root:
+                raise RootLayoutError("root-layout: configured registry path changed")
+            validate_roots(package=self._baseline.root, state=self._state_root, saved=self._saved_root,
+                           history=self._history_root, registry=self._registry_root)
+
+    def _composite(self):
+        if self._registry_root is None:
+            return None
+        from serving.incremental_publication import active_snapshot
+        try:
+            return active_snapshot(self._baseline, self._registry_root, self._state_root)
+        except Exception as exc:
+            raise QueryError('composite-unavailable', 'composite selection failed: %s' % exc) from exc
 
     # ------------------------------------------------------------------ status
     def status(self) -> dict:
         """Server facts (all from the verified package record / CLI flags)."""
         self._validate_layout()
         run_record = self._baseline.run_record
-        return {
+        document = {
             "result": "pass",
             "service": SERVICE,
             "package_run_id": run_record.get("run_id") if isinstance(run_record, dict) else None,
@@ -160,6 +178,11 @@ class UiApi:
             "repo_root": self._repo_root,
             "query_modes": list(QUERY_MODES),
         }
+        if self._registry_root is not None:
+            selected = self._composite()
+            document['composite'] = {'generation': selected[0].manifest_digest if selected else None,
+                                     'supported_query_modes': ['Q1-dataset', 'Q2-date-range', 'Q3-instrument', 'Q4-filter', 'Q5-association'] if selected else list(QUERY_MODES)}
+        return document
 
     # ------------------------------------------------------------------ query
     def query(self, body: Optional[dict]) -> dict:
@@ -183,7 +206,7 @@ class UiApi:
         if not isinstance(params, dict):
             raise SavedQueryError("saved-query-invalid", "params must be a JSON object (the mode's exact parameter contract)")
         validated = validate_saved_definition(mode, params, "ui query")
-        output = execute_query_definition(mode, validated, self._baseline, self._state_root, m2=self._m2, repo_root=self._repo_root)
+        output = execute_query_definition(mode, validated, self._baseline, self._state_root, m2=self._m2, repo_root=self._repo_root, composite=self._composite())
         return {"result": "pass", "query": output}
 
     def _saved_fresh(self) -> bool:
@@ -241,7 +264,12 @@ class UiApi:
         _query_id_or_raise(query_id)
         if self._saved_fresh():
             raise SavedQueryError("saved-query-not-found", "no saved query with identifier %r to run (store is empty)" % query_id)
-        output = execute_saved(self._saved_root, query_id, self._baseline, self._state_root, m2=self._m2, repo_root=self._repo_root)
+        composite = self._composite()
+        if composite is None:
+            output = execute_saved(self._saved_root, query_id, self._baseline, self._state_root, m2=self._m2, repo_root=self._repo_root)
+        else:
+            record = get_saved(self._saved_root, query_id)
+            output = execute_query_definition(record['mode'], record['params'], self._baseline, self._state_root, m2=self._m2, repo_root=self._repo_root, composite=composite)
         return {"result": "pass", "query_id": query_id, "query": output}
 
     # ------------------------------------------------------------------ history
@@ -284,6 +312,8 @@ class UiApi:
             raise HistoryError("history-invalid", "params must be a JSON object (the mode's exact parameter contract)")
         with self._lock:
             self._validate_layout()
+            if self._composite() is not None:
+                raise QueryError('composite-unavailable', 'history recording is unavailable for bounded composite generations')
             entry, output, detail, digest = record_execution(
                 self._history_root, mode, params, self._baseline, self._state_root, m2=self._m2, repo_root=self._repo_root
             )

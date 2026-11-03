@@ -478,7 +478,7 @@ def delete_saved(root: str, query_id: str) -> str:
 
 
 def execute_query_definition(
-    mode: str, params: dict, baseline: Baseline, state_root: str, m2: bool = False, repo_root: Optional[str] = None
+    mode: str, params: dict, baseline: Baseline, state_root: str, m2: bool = False, repo_root: Optional[str] = None, composite=None
 ) -> dict:
     """Execute one supported Q1–Q10 query contract by its query-id mode name,
     with an exact (already validated) params dict.
@@ -492,7 +492,12 @@ def execute_query_definition(
     mirroring the established verify → build → query flow). ``m2`` pins the D01
     inventory for the Q9 view exactly as the CLI does.
     """
-    index_document, _digest = load_index(state_root, baseline)
+    if composite is None:
+        index_document, _digest = load_index(state_root, baseline)
+    else:
+        baseline, index_document = composite
+        if mode not in (DATASET_MODE, DATE_RANGE_MODE, INSTRUMENT_MODE, FILTER_MODE, ASSOCIATIONS_MODE):
+            raise QueryError("composite-unavailable", "this query is unavailable for the bounded composite generation")
     if mode == DATASET_MODE:
         return query_dataset_summary(index_document, family=params.get("family"), year=params.get("year"))
     if mode == DATE_RANGE_MODE:

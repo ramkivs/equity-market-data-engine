@@ -176,6 +176,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--state", required=True, help="serving state dir (OUTSIDE the package)")
     parser.add_argument("--saved-state", required=True, help="saved-query store dir (distinct from --state)")
     parser.add_argument("--history-state", required=True, help="query-history store dir (distinct from --state)")
+    parser.add_argument("--registry", default=None, help="optional bounded composite registry root")
     parser.add_argument("--repo", default=None, help="repository root holding the durable in-repository evidence records (Q10); omit for explicit absence")
     parser.add_argument("--bind", default="127.0.0.1", help="interface to bind (default loopback — single-user personal hosting)")
     parser.add_argument("--port", type=int, default=8613, help="port to bind (default 8613)")
@@ -197,15 +198,20 @@ def main(argv=None) -> int:
     except Exception as exc:
         print(json.dumps({"result": "fail", "stage": "index", "detail": str(exc)}, sort_keys=True), flush=True)
         return 3
-    api = UiApi(
-        baseline,
-        args.state,
-        args.saved_state,
-        args.history_state,
-        m2=args.m2,
-        repo_root=args.repo,
-        root_config=roots,
-    )
+    try:
+        api = UiApi(
+            baseline,
+            args.state,
+            args.saved_state,
+            args.history_state,
+            m2=args.m2,
+            repo_root=args.repo,
+            root_config=roots,
+            registry_root=args.registry,
+        )
+    except Exception as exc:
+        print(json.dumps({"result": "fail", "stage": "layout", "detail": str(exc)}, sort_keys=True), flush=True)
+        return 3
     server = ThreadingHTTPServer((args.bind, args.port), _Handler)
     server.daemon_threads = True
     server.ui_api = api  # type: ignore[attr-defined]

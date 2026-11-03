@@ -12,12 +12,19 @@ import datetime
 import json
 import os
 import re
+from threading import Lock
 from typing import Optional, Tuple
 
 from .baseline import Baseline, BaselineError
 from .index import ServingIndexError
 from .symbols import observed_trading_symbol, build_symbol_catalog, resolve_symbol, row_matches, resolution_metadata
 from .continuity_view import get_continuity, group_summary
+
+
+def _open_source(baseline, relative):
+    if hasattr(baseline, 'open_text'):
+        return baseline.open_text(relative)
+    return open(baseline.path(relative), 'r', encoding='utf-8')
 
 QUERY_ID = "Q3-instrument"
 DATASET_QUERY_ID = "Q1-dataset"
@@ -184,13 +191,16 @@ def _validate_iso_date(label: str, value: object) -> str:
 
 
 _symbol_catalog_cache = {}
+_symbol_catalog_lock = Lock()
 
 def _symbol_catalog(baseline, index):
     key = (baseline.root, baseline.manifest_digest, tuple(sorted(index.get("files", {}))))
-    if key not in _symbol_catalog_cache:
-        _symbol_catalog_cache.clear()
-        _symbol_catalog_cache[key] = build_symbol_catalog(baseline, index)
-    return _symbol_catalog_cache[key]
+    with _symbol_catalog_lock:
+        if key not in _symbol_catalog_cache:
+            catalog = build_symbol_catalog(baseline, index)
+            _symbol_catalog_cache.clear()
+            _symbol_catalog_cache[key] = catalog
+        return _symbol_catalog_cache[key]
 
 def _resolve(catalog, symbol, series):
     try:
@@ -233,7 +243,7 @@ def query_instrument(
     results = []
     for relative in sorted(candidates):
         meta = index["files"][relative]
-        with open(baseline.path(relative), "r", encoding="utf-8") as handle:
+        with _open_source(baseline, relative) as handle:
             for line_number, line in enumerate(handle, start=1):
                 if not line.strip():
                     continue
@@ -314,7 +324,7 @@ def query_date_range(
     results = []
     for relative in sorted(candidates):
         meta = index["files"][relative]
-        with open(baseline.path(relative), "r", encoding="utf-8") as handle:
+        with _open_source(baseline, relative) as handle:
             for line in handle:
                 if not line.strip():
                     continue
@@ -386,7 +396,7 @@ def query_filters(
     results = []
     for relative in sorted(index.get("files", {})):
         meta = index["files"][relative]
-        with open(baseline.path(relative), "r", encoding="utf-8") as handle:
+        with _open_source(baseline, relative) as handle:
             for line in handle:
                 if not line.strip():
                     continue
@@ -558,6 +568,8 @@ def parse_associations(baseline: Baseline) -> Optional[list]:
     exactly one document per active key, sorted; a repeat is corruption).
     Read-only: the file is streamed and nothing is written.
     """
+    if hasattr(baseline, 'payload'):
+        return list(enumerate(baseline.payload['w2'], start=1))
     path = baseline.path(ASSOCIATIONS_FILE)
     if not os.path.exists(path):
         return None
@@ -651,7 +663,7 @@ def query_associations(
                     "symbol_resolution": {"selector": symbol, "correlation_identity": selection["identity"] if selection["identity"] == doc["security_id"] else None, "basis": "valid-isin-correlation" if selection["identity"] and selection["identity"] == doc["security_id"] else "exact-observation"},
                     "security_id": doc["security_id"],
                     "series": series,
-                    "source_file": ASSOCIATIONS_FILE,
+                    "source_file": ("composite/" + baseline.manifest_digest + "/w2/associations.jsonl") if hasattr(baseline, "payload") else ASSOCIATIONS_FILE,
                     "source_line_number": line_number,
                     "symbol": symbol,
                 }
@@ -662,7 +674,7 @@ def query_associations(
             served["serving"] = {
                 "query": ASSOCIATIONS_QUERY_ID,
                 "security_id": security_id,
-                "source_file": ASSOCIATIONS_FILE,
+                "source_file": ("composite/" + baseline.manifest_digest + "/w2/associations.jsonl") if hasattr(baseline, "payload") else ASSOCIATIONS_FILE,
                 "source_line_number": line_number,
             }
             served["serving"]["continuity"] = group_summary(continuity_doc, doc["security_id"])
