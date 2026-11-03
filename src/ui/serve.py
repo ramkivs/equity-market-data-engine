@@ -50,6 +50,7 @@ from serving.index import (
     load_index,
     write_index,
 )
+from serving.paths import validate_roots
 from serving.rebuild import rebuild_state
 
 from .api import UiApi, encode
@@ -76,15 +77,13 @@ def _ensure_index(baseline, state_root: str) -> dict:
         document, _digest = load_index(state_root, baseline)
         return document
     except ServingIndexError as exc:
-        if "index-stale" in str(exc.check):
-            report = rebuild_state(baseline, state_root)
+        # Recovery leaves unknown files (including interrupted temp files) alone.
+        if exc.check == "index-stale":
+            rebuild_state(baseline, state_root, replace_only=True)
         else:
             document = build_index(baseline)
             write_index(state_root, document)
-            report = {"state": "built", "identical": None}
         document, _digest = load_index(state_root, baseline)
-        report_loaded = dict(report)
-        report_loaded["index_format"] = document.get("format")
         return document
 
 
@@ -191,6 +190,7 @@ def main(argv=None) -> int:
         print(json.dumps({"result": "fail", "stage": "baseline", "detail": str(exc)}, sort_keys=True), flush=True)
         return 3
     try:
+        validate_roots(package=baseline.root, state=args.state, saved=args.saved_state, history=args.history_state)
         _ensure_index(baseline, args.state)
     except Exception as exc:
         print(json.dumps({"result": "fail", "stage": "index", "detail": str(exc)}, sort_keys=True), flush=True)

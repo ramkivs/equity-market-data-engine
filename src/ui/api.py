@@ -115,6 +115,9 @@ class RouteMethod(Exception):
     """Internal: the path exists but the method is not authorized for it."""
 
 
+from serving.paths import validate_roots, repository_root, resolved, RootLayoutError
+
+
 class UiApi:
     """The presentation layer's single data path over the serving boundary."""
 
@@ -127,14 +130,18 @@ class UiApi:
         m2: bool = False,
         repo_root: Optional[str] = None,
     ) -> None:
+        validate_roots(package=baseline.root, state=state_root, saved=saved_root, history=history_root)
         self._baseline = baseline
-        self._state_root = state_root
-        self._saved_root = saved_root
-        self._history_root = history_root
+        self._state_root = resolved(state_root)
+        self._saved_root = resolved(saved_root)
+        self._history_root = resolved(history_root)
         self._m2 = m2
-        self._repo_root = repo_root
+        self._repo_root = repository_root(repo_root) if repo_root is not None else None
         # serialize store mutations (saved/history) across handler threads
         self._lock = threading.Lock()
+
+    def _validate_layout(self):
+        validate_roots(package=self._baseline.root, state=self._state_root, saved=self._saved_root, history=self._history_root)
 
     # ------------------------------------------------------------------ status
     def status(self) -> dict:
@@ -170,7 +177,7 @@ class UiApi:
         if not isinstance(params, dict):
             raise SavedQueryError("saved-query-invalid", "params must be a JSON object (the mode's exact parameter contract)")
         validated = validate_saved_definition(mode, params, "ui query")
-        output = execute_query_definition(mode, validated, self._baseline, self._state_root, m2=self._m2)
+        output = execute_query_definition(mode, validated, self._baseline, self._state_root, m2=self._m2, repo_root=self._repo_root)
         return {"result": "pass", "query": output}
 
     def _saved_fresh(self) -> bool:
@@ -192,12 +199,14 @@ class UiApi:
         return {"result": "pass", "entry": get_saved(self._saved_root, query_id)}
 
     def saved_create(self, body: Optional[dict]) -> dict:
+        self._validate_layout()
         query_id, mode, params = _saved_def_body(body)
         with self._lock:
             record, digest = create_saved(self._saved_root, query_id, mode, params)
         return {"result": "pass", "entry": record, "store_sha256": digest}
 
     def saved_update(self, query_id: str, body: Optional[dict]) -> dict:
+        self._validate_layout()
         _query_id_or_raise(query_id)
         if self._saved_fresh():
             raise SavedQueryError("saved-query-not-found", "no saved query with identifier %r (store is empty)" % query_id)
@@ -207,6 +216,7 @@ class UiApi:
         return {"result": "pass", "entry": record, "store_sha256": digest}
 
     def saved_delete(self, query_id: str) -> dict:
+        self._validate_layout()
         _query_id_or_raise(query_id)
         if self._saved_fresh():
             raise SavedQueryError("saved-query-not-found", "no saved query with identifier %r (store is empty)" % query_id)
@@ -219,7 +229,7 @@ class UiApi:
         _query_id_or_raise(query_id)
         if self._saved_fresh():
             raise SavedQueryError("saved-query-not-found", "no saved query with identifier %r to run (store is empty)" % query_id)
-        output = execute_saved(self._saved_root, query_id, self._baseline, self._state_root, m2=self._m2)
+        output = execute_saved(self._saved_root, query_id, self._baseline, self._state_root, m2=self._m2, repo_root=self._repo_root)
         return {"result": "pass", "query_id": query_id, "query": output}
 
     # ------------------------------------------------------------------ history
@@ -236,6 +246,7 @@ class UiApi:
         return {"result": "pass", "entry": get_history(self._history_root, number)}
 
     def history_delete(self, seq: str) -> dict:
+        self._validate_layout()
         number = _seq_or_raise(seq)
         if self._history_fresh():
             raise HistoryError("history-not-found", "no history entry with seq %d (store is empty)" % number)
@@ -245,6 +256,7 @@ class UiApi:
 
     def history_record(self, body: Optional[dict]) -> dict:
         """The ONLY explicit history-recording operation (D39; C2(a))."""
+        self._validate_layout()
         if not isinstance(body, dict):
             raise HistoryError("history-invalid", "the request body must be a JSON object {mode, params}")
         mode = body.get("mode")
@@ -257,7 +269,7 @@ class UiApi:
             raise HistoryError("history-invalid", "params must be a JSON object (the mode's exact parameter contract)")
         with self._lock:
             entry, output, detail, digest = record_execution(
-                self._history_root, mode, params, self._baseline, self._state_root, m2=self._m2
+                self._history_root, mode, params, self._baseline, self._state_root, m2=self._m2, repo_root=self._repo_root
             )
         result: dict = {"result": "recorded", "outcome": entry["outcome"], "entry": entry, "store_sha256": digest}
         if entry["outcome"] == "success":
@@ -270,8 +282,11 @@ class UiApi:
     def dispatch(self, method: str, path: str, body: Optional[dict] = None) -> Tuple[int, dict]:
         """Route one request -> (HTTP status, canonical-JSON document)."""
         try:
+            self._validate_layout()
             status, document = self._route(method, path, body)
             return status, document
+        except RootLayoutError as exc:
+            return 400, {"result": "fail", "check": "root-layout", "detail": str(exc)}
         except RouteMethod:
             return 405, {"result": "fail", "check": "method-not-allowed", "detail": "method not allowed for this route"}
         except (SavedQueryError, HistoryError, QueryError) as exc:

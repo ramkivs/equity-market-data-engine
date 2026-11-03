@@ -191,6 +191,7 @@ def open_baseline(
     digests, completion marker) — the resulting handle is *not* pinned to any
     recorded qualified identity and must not be treated as the M2 baseline.
     """
+    root = os.path.realpath(os.path.abspath(root))
     if not os.path.isdir(root):
         raise BaselineError("open", "package directory not found: %s" % root)
     manifest_path = os.path.join(root, PACKAGE_MANIFEST)

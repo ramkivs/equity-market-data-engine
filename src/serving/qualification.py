@@ -514,6 +514,8 @@ def query_qualification(baseline: Baseline, repo_root: Optional[str] = None) -> 
     runner_sha = runner.get("runner_sha256") if isinstance(runner, dict) else None
     package = _package_section(baseline, run_record, marker, governed_inputs)
     pinned = _pinned_section(baseline)
+    if repo_root is not None:
+        repo_root = os.path.realpath(os.path.abspath(repo_root))
     if repo_root is None:
         evidence = {"boundary": _EVIDENCE_BOUNDARY, "repo_root_provided": False}
         for key, builder in (

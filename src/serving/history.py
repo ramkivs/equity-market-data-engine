@@ -87,6 +87,7 @@ import os
 import tempfile
 from typing import Dict, List, Optional, Tuple
 
+from .paths import validate_roots, overlaps
 from .baseline import Baseline
 from .index import canonical_json
 from .query import QueryError
@@ -233,6 +234,7 @@ def load_history(root: str) -> dict:
 def save_history_document(root: str, document: dict) -> str:
     """Validate and atomically persist ``document``; returns the store sha256."""
     _validate_document(document, "query-history store")
+    validate_roots(state=root)
     os.makedirs(root, exist_ok=True)
     text = canonical_json(document) + "\n"
     digest = _sha256_text(text)
@@ -257,7 +259,7 @@ def _load_or_empty(root: str) -> dict:
 def assert_separate_from_state(history_root: str, state_root: str) -> None:
     """Isolation (C1(a) discipline): the history root must be distinct from the
     derived-state root (the derived-state rebuild must never reach history)."""
-    if os.path.realpath(history_root) == os.path.realpath(state_root):
+    if overlaps(history_root, state_root):
         raise HistoryError(
             "history-state-conflict",
             "the query-history store root must be a distinct directory from the derived "
@@ -278,6 +280,7 @@ def record_execution(
     baseline: Baseline,
     state_root: str,
     m2: bool = False,
+    repo_root: Optional[str] = None,
 ) -> Tuple[dict, Optional[dict], Optional[str], str]:
     """The single explicit history-recording operation (CLI ``history record``).
 
@@ -293,12 +296,13 @@ def record_execution(
     * This operation is the ONLY path that writes the history store (C2(a)).
     """
     assert_separate_from_state(root, state_root)
+    validate_roots(package=baseline.root, history=root, state=state_root)
     params = validate_saved_definition(mode, params, "history execution description")
     document = _load_or_empty(root)
     entries: List[dict] = document["entries"]
     seq = document["next_seq"]
     try:
-        output = execute_query_definition(mode, params, baseline, state_root, m2=m2)
+        output = execute_query_definition(mode, params, baseline, state_root, m2=m2, repo_root=repo_root)
         entry: Dict[str, object] = {"seq": seq, "mode": mode, "params": params, "outcome": "success"}
         detail: Optional[str] = None
     except QueryError as exc:

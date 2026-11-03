@@ -37,6 +37,7 @@ import os
 from typing import Optional
 
 from .baseline import DEFAULT_M2_SPEC, Baseline
+from .paths import repository_root
 from .query import QueryError
 
 ARCHIVE_QUERY_ID = "Q9-archive-inventory"
@@ -147,7 +148,7 @@ def _parse_governed_inputs(baseline: Baseline) -> dict:
     return document
 
 
-def load_d01_inventory(path: Optional[str] = None) -> dict:
+def load_d01_inventory(path: Optional[str] = None, repo_root: Optional[str] = None) -> dict:
     """Load and verify the committed in-repo D01 inventory.
 
     Returns a mapping keyed by (root, relative_path). The file's sha256 must
@@ -155,7 +156,7 @@ def load_d01_inventory(path: Optional[str] = None) -> dict:
     ``D01_INVENTORY_RECORD_COUNT``) before it is trusted; any identity failure
     raises :class:`D01InventoryError` (fail closed — no fallback, no repair).
     """
-    inventory_path = path or D01_INVENTORY_PATH
+    inventory_path = path if path is not None else os.path.join(repository_root(repo_root), D01_INVENTORY_PATH)
     if not os.path.isfile(inventory_path):
         raise D01InventoryError("d01-load", "in-repo D01 inventory missing: %s" % inventory_path)
     with open(inventory_path, "rb") as handle:

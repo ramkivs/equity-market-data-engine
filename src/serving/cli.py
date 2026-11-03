@@ -51,6 +51,7 @@ import json
 import sys
 
 from . import baseline as baseline_mod
+from .paths import validate_roots, RootLayoutError
 from .archive import D01InventoryError, load_d01_inventory, query_archive_inventory
 from .detail import query_record_detail
 from .index import index_state, load_index, write_index, build_index, ServingIndexError
@@ -126,6 +127,7 @@ def cmd_verify(args) -> int:
 def cmd_build(args) -> int:
     try:
         handle = _open(args)
+        validate_roots(package=handle.root, state=args.state)
         document = build_index(handle)
         digest = write_index(args.state, document)
     except (baseline_mod.BaselineError, ServingIndexError) as exc:
@@ -398,7 +400,7 @@ def cmd_saved_delete(args) -> int:
 def cmd_saved_run(args) -> int:
     try:
         handle = _open(args)
-        output = execute_saved(args.saved_state, args.id, handle, args.state, m2=args.m2)
+        output = execute_saved(args.saved_state, args.id, handle, args.state, m2=args.m2, repo_root=args.repository_root)
     except SavedQueryError as exc:
         _print_json({"result": "fail", "detail": str(exc)})
         return _saved_exit_code(exc)
@@ -440,7 +442,7 @@ def cmd_history_record(args) -> int:
     try:
         handle = _open(args)
         entry, output, detail, digest = record_execution(
-            args.history_state, args.mode, params, handle, args.state, m2=args.m2
+            args.history_state, args.mode, params, handle, args.state, m2=args.m2, repo_root=args.repository_root
         )
     except HistoryError as exc:
         _print_json({"result": "fail", "detail": str(exc)})
@@ -507,7 +509,7 @@ def cmd_dataset(args) -> int:
 def cmd_inventory(args) -> int:
     try:
         handle = _open(args)
-        d01 = load_d01_inventory() if args.m2 else None
+        d01 = load_d01_inventory(repo_root=args.repo) if args.m2 else None
         output = query_archive_inventory(handle, d01=d01)
     except (baseline_mod.BaselineError, D01InventoryError, QueryError) as exc:
         _print_json({"result": "fail", "detail": str(exc)})
@@ -774,6 +776,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_saved_run.add_argument("--saved-state", required=True, help="saved-query store dir")
     p_saved_run.add_argument("--id", dest="id", required=True, help="saved-query identifier")
     add_common(p_saved_run, state=True)
+    p_saved_run.add_argument("--repository-root", default=None, help="repository root for D01 inventory")
     p_saved_run.set_defaults(func=cmd_saved_run)
 
     p_history = sub.add_parser(
@@ -795,6 +798,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_saved_def_flags(p_history_record)
     add_common(p_history_record, state=True)
+    p_history_record.add_argument("--repository-root", default=None, help="repository root for D01 inventory")
     p_history_record.set_defaults(func=cmd_history_record)
 
     p_history_list = history_sub.add_parser("list", help="list history entries (ascending seq)")
@@ -841,6 +845,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Q9 archive inventory (per-archive INPUT_MANIFEST + D01 facts; no index)",
     )
     add_common(p_inventory)
+    p_inventory.add_argument("--repo", default=None, help="repository root holding D01 inventory")
     p_inventory.set_defaults(func=cmd_inventory)
 
     p_rebuild = sub.add_parser("rebuild", help="delete and rebuild class-(4) state (op b)")
@@ -855,7 +860,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except RootLayoutError as exc:
+        _print_json({"result": "fail", "check": "root-layout", "detail": str(exc)})
+        return 3
 
 
 if __name__ == "__main__":

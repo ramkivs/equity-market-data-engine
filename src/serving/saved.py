@@ -86,6 +86,7 @@ import tempfile
 from typing import Dict, List, Optional, Tuple
 
 from .archive import ARCHIVE_QUERY_ID, load_d01_inventory, query_archive_inventory
+from .paths import validate_roots, overlaps
 from .baseline import Baseline
 from .detail import RECORD_DETAIL_QUERY_ID, query_record_detail
 from .index import canonical_json, load_index
@@ -380,6 +381,7 @@ def load_saved(root: str) -> dict:
 def save_document(root: str, document: dict) -> str:
     """Validate and atomically persist ``document``; returns the store sha256."""
     _validate_document(document, "saved-query store")
+    validate_roots(state=root)
     os.makedirs(root, exist_ok=True)
     text = canonical_json(document) + "\n"
     digest = _sha256_text(text)
@@ -404,7 +406,7 @@ def _load_or_empty(root: str) -> dict:
 def assert_separate_roots(saved_root: str, state_root: str) -> None:
     """C1(a) isolation: the saved store root must be distinct from the
     derived-state root (the derived-state rebuild must never reach the store)."""
-    if os.path.realpath(saved_root) == os.path.realpath(state_root):
+    if overlaps(saved_root, state_root):
         raise SavedQueryError(
             "saved-query-conflict",
             "the saved-query store root must be a distinct directory from the derived "
@@ -492,7 +494,7 @@ def delete_saved(root: str, query_id: str) -> str:
 
 
 def execute_query_definition(
-    mode: str, params: dict, baseline: Baseline, state_root: str, m2: bool = False
+    mode: str, params: dict, baseline: Baseline, state_root: str, m2: bool = False, repo_root: Optional[str] = None
 ) -> dict:
     """Execute one supported Q1–Q10 query contract by its query-id mode name,
     with an exact (already validated) params dict.
@@ -567,16 +569,16 @@ def execute_query_definition(
     if mode == DATA_QUALITY_MODE:
         return query_data_quality(baseline, index_document)
     if mode == ARCHIVE_MODE:
-        return query_archive_inventory(baseline, d01=(load_d01_inventory() if m2 else None))
+        return query_archive_inventory(baseline, d01=(load_d01_inventory(repo_root=repo_root) if m2 else None))
     if mode == QUALIFICATION_MODE:
-        return query_qualification(baseline, repo_root=params.get("repo"))
+        return query_qualification(baseline, repo_root=params.get("repo", repo_root))
     raise SavedQueryError(
         "saved-query-invalid",
         "no execution path for query mode %r (supported: %s)" % (mode, ", ".join(sorted(SAVED_MODES))),
     )
 
 
-def execute_saved(root: str, query_id: str, baseline: Baseline, state_root: str, m2: bool = False) -> dict:
+def execute_saved(root: str, query_id: str, baseline: Baseline, state_root: str, m2: bool = False, repo_root: Optional[str] = None) -> dict:
     """Load a saved definition and execute it through the existing query layer.
 
     The result envelope is exactly the one the corresponding CLI query/view
@@ -585,8 +587,9 @@ def execute_saved(root: str, query_id: str, baseline: Baseline, state_root: str,
     (C2(a)), and a query failure never affects it or the baseline (D16-09).
     """
     assert_separate_roots(root, state_root)
+    validate_roots(package=baseline.root, saved=root, state=state_root)
     document = load_saved(root)
     record = document["queries"].get(query_id)
     if record is None:
         raise SavedQueryError("saved-query-not-found", "no saved query with identifier %r to run" % query_id)
-    return execute_query_definition(record["mode"], record["params"], baseline, state_root, m2=m2)
+    return execute_query_definition(record["mode"], record["params"], baseline, state_root, m2=m2, repo_root=repo_root)

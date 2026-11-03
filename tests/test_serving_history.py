@@ -372,8 +372,8 @@ class FailClosedStateTests(HistoryBase):
         from serving.index import ServingIndexError
 
         with self.assertRaises(ServingIndexError):
-            record_execution(self.hist, "Q8-data-quality", {}, self.handle, self.root, m2=False)
-        # no derived-state root at self.root -> no execution completed -> no entry
+            record_execution(self.hist, "Q8-data-quality", {}, self.handle, os.path.join(self.root, "missing-state"), m2=False)
+        # no derived-state root at missing-state -> no execution completed -> no entry
         self.assertEqual(self.store_files(), before)
 
 

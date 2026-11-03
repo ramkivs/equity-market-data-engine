@@ -20,9 +20,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
+import contextlib
 from typing import Optional, Tuple
 
 from .baseline import Baseline
+from .paths import validate_roots
 
 INDEX_FILENAME = "serving_index.json"
 INDEX_DIGEST_FILENAME = "serving_index.sha256"
@@ -44,8 +47,17 @@ def canonical_json(obj) -> str:
 
 
 def _write_text(path: str, text: str) -> None:
-    with open(path, "w", encoding="utf-8", newline="") as handle:
-        handle.write(text)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix="." + os.path.basename(path) + ".", suffix=".part")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def _sha256_text(text: str) -> str:
@@ -166,6 +178,7 @@ def write_index(state_dir: str, document: dict) -> str:
     Returns the index file's sha256. The state directory is created if absent and
     must live OUTSIDE the baseline package (never inside it).
     """
+    validate_roots(state=state_dir)
     os.makedirs(state_dir, exist_ok=True)
     text = canonical_json(document) + "\n"
     digest = _sha256_text(text)
@@ -181,18 +194,27 @@ def load_index(state_dir: str, baseline: Baseline) -> Tuple[dict, str]:
     embedded package identity differs from the verified baseline is stale and is
     refused (``ServingIndexError``) — the remedy is a rebuild, never a silent serve.
     """
+    validate_roots(package=baseline.root, state=state_dir)
     index_path = os.path.join(state_dir, INDEX_FILENAME)
     digest_path = os.path.join(state_dir, INDEX_DIGEST_FILENAME)
     if not (os.path.isfile(index_path) and os.path.isfile(digest_path)):
         raise ServingIndexError("index-load", "serving state missing or incomplete (run a build)")
-    with open(index_path, "r", encoding="utf-8") as handle:
-        text = handle.read()
-    digest = _sha256_text(text)
-    with open(digest_path, "r", encoding="utf-8") as handle:
-        sidecar = handle.read()
+    try:
+        with open(index_path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+        digest = _sha256_text(text)
+        with open(digest_path, "r", encoding="utf-8") as handle:
+            sidecar = handle.read()
+    except (UnicodeError, OSError) as exc:
+        raise ServingIndexError("index-load", "cannot read serving state: %s" % exc)
     if sidecar != "%s  %s\n" % (digest, INDEX_FILENAME):
         raise ServingIndexError("index-load", "index digest sidecar mismatch")
-    document = json.loads(text)
+    try:
+        document = json.loads(text)
+    except (ValueError, TypeError) as exc:
+        raise ServingIndexError("index-load", "invalid index JSON: %s" % exc)
+    if not isinstance(document, dict):
+        raise ServingIndexError("index-load", "index is not an object")
     if document.get("format") != INDEX_FORMAT:
         raise ServingIndexError("index-load", "unknown index format %r" % document.get("format"))
     identity = document.get("package", {})
