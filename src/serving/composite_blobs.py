@@ -125,6 +125,8 @@ class GroupMap(BlobMap):
         self.sources = frozenset(sources)
 
     def __getitem__(self, key):
+        if key not in self.references:
+            raise KeyError(key)
         import json
         try:
             doc = json.loads(super().__getitem__(key))
@@ -134,3 +136,51 @@ class GroupMap(BlobMap):
             return doc['rows']
         except (ValueError, TypeError, KeyError) as exc:
             raise QueryError('composite-unavailable', 'incremental identity group read failed: %s' % exc) from exc
+
+
+def validate_override_references(payload):
+    for name in ('w2_overrides', 'b3_overrides'):
+        groups = payload.get(name)
+        if not isinstance(groups, dict) or any(not isinstance(k, str) or not k or not _valid_digest(v) for k, v in groups.items()):
+            raise ValueError('invalid incremental override references')
+    if not set(payload['w2_delta']).issubset(payload['w2_overrides']) or not set(payload['b2_delta']).issubset(payload['b3_overrides']):
+        raise ValueError('incremental override reference census mismatch')
+
+
+def override_document(kind, identity, value):
+    if kind not in ('w2', 'b3') or not isinstance(identity, str) or not identity:
+        raise ValueError('invalid incremental override identity')
+    if kind == 'w2':
+        from .query import _validate_identity_document
+        if value is not None:
+            try:
+                actual = _validate_identity_document(value, 'incremental override')
+            except QueryError as exc:
+                raise ValueError('invalid incremental W2 override: %s' % exc) from exc
+            if actual != identity:
+                raise ValueError('incremental W2 override identity mismatch')
+    elif not isinstance(value, list) or any(not isinstance(group, dict) or group.get('security_id') != identity for group in value):
+        raise ValueError('incremental B3 override identity mismatch')
+    return {'kind': kind, 'identity': identity, 'value': value}
+
+
+class OverrideMap(BlobMap):
+    def __init__(self, path, references, kind):
+        super().__init__(path, references)
+        self.kind = kind
+
+    def __contains__(self, key):
+        return key in self.references
+
+    def __getitem__(self, key):
+        if key not in self.references:
+            raise KeyError(key)
+        import json
+        try:
+            doc = json.loads(super().__getitem__(key))
+            if not isinstance(doc, dict) or set(doc) != {'kind', 'identity', 'value'} or doc['kind'] != self.kind or doc['identity'] != key:
+                raise ValueError('incremental override blob identity mismatch')
+            override_document(self.kind, key, doc['value'])
+            return doc['value']
+        except (ValueError, TypeError, KeyError) as exc:
+            raise QueryError('composite-unavailable', 'incremental override read failed: %s' % exc) from exc

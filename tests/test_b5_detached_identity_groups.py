@@ -28,6 +28,7 @@ class IdentityGroupTests(unittest.TestCase):
         p['delta'] = dict(p['delta'].references); p['evidence'] = dict(p['evidence'].references)
         old_hashes = set(p['w2_delta'].references.values()) | set(p['b2_delta'].references.values())
         p['w2_delta'] = dict(p['w2_delta']); p['b2_delta'] = dict(p['b2_delta'])
+        p['w2_overrides'] = dict(p['w2_overrides']); p['b3_overrides'] = dict(p['b3_overrides'])
         p['format'] = 'catalog-composite/2.0'
         text = _json(p); old = _sha(text)
         with sqlite3.connect(self.dbpath()) as db:

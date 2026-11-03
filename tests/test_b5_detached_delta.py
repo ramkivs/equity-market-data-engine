@@ -30,6 +30,8 @@ class DetachedDeltaTests(unittest.TestCase):
         payload['evidence'] = dict(payload['evidence'])
         payload['w2_delta'] = dict(payload['w2_delta'])
         payload['b2_delta'] = dict(payload['b2_delta'])
+        payload['w2_overrides'] = dict(payload['w2_overrides'])
+        payload['b3_overrides'] = dict(payload['b3_overrides'])
         payload['format'] = 'catalog-composite/1.0'
         text = _json(payload); generation = _sha(text)
         with sqlite3.connect(self.dbpath()) as db:

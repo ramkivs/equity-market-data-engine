@@ -54,7 +54,7 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
 
 ## Scope limits — no B5 completion claim
 
-* Catalog-backed generation format 3 stores incremental canonical rows and
+* Catalog-backed generation format 4 stores incremental canonical rows and
   evidence once as content-addressed SQLite blobs. Later publications refer to
   existing blobs without reading or copying their contents. Readers verify each
   accessed blob against its generation-pinned digest; old blobs remain available
@@ -62,16 +62,22 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   generation commit in the same transaction. Existing format-1 catalog composites
   migrate once from their retained inline deltas, with digest/accepted checks and
   no historical canonical or accepted source archive reads. Format-2 generations
-  migrate their inline identity projections to format 3 transactionally.
+  migrate their inline identity projections, and format-3 generations migrate
+  their inline W2/B3 overrides, transactionally.
 * W2 and B2 incremental projections are stored as content-addressed per-identity
   groups. Later publication reads and rewrites only groups affected by the new
   rows or ticker ambiguity; unaffected group contents are not copied or read.
   Group hashes and identity/source checks are verified when accessed, and prior
   versions remain available to pinned readers. A single heavily updated identity
   can still grow without bound within its individual group blob.
+* W2/B3 overrides are also retained as verified per-identity blobs. A later
+  publication writes only re-derived overrides; unaffected override bytes are
+  neither copied nor read. Readers resolve the generation-pinned digest on
+  access, and old versions remain available to pinned readers. Explicit
+  registry binding verifies all retained override blobs.
 * This is **not yet fully delta-only**: the baseline serving index, compact
-  ticker census, candidate and identity-group references, and W2/B3 overrides
-  remain together in each generation JSON. Publication
+  ticker census, candidate references, and identity-group and override reference
+  maps remain together in each generation JSON. Publication
   still copies and serializes these accumulated structures, and recomputes
   index summary counts. Very large or numerous deltas can still hit memory or
   SQLite single-value limits. No scalable long-running lifecycle is established.
@@ -131,7 +137,7 @@ This exceeds the former total 20,000-row guard, but is **not** an M2-scale test
 or a resource claim for approximately 5.7 million rows. No qualified M2 data was
 accessed or modified, and no historical archive was ingested.
 
-Linux disposable-fixture suite: **1040 tests run, 14 skipped**; existing
+Linux disposable-fixture suite: **1045 tests run, 14 skipped**; existing
 unrelated ResourceWarnings remain. Windows validation remains pending.
 
 The scoped-reader tests exercise calendar gap/holiday preservation, UDiFF date
@@ -167,3 +173,8 @@ pinned unaffected groups, on-access corruption, format-2 migration with and
 without pending deltas, rollback/retry, corrupt group identities and reference
 validation. The identity groups and derived overrides are not yet sharded within
 a single heavily updated identity.
+
+`tests/test_b5_detached_overrides.py` covers detached override reuse, pinned
+readers, selected corruption, explicit binding verification, format-3 migration
+with and without pending inputs, rollback/retry, and unaffected baseline
+identity continuity. It does not establish full delta-only scaling.

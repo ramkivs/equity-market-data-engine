@@ -114,10 +114,14 @@ def validate_registry(baseline, state_root, registry_root):
                 identities.add(identity); sources.add(source); digests.add(item['digest'])
             if identities != set(accepted) or set(delta) != sources or set(evidence) != digests:
                 raise ValueError('active generation has missing or extra accepted evidence')
-            if selected.payload.get('format') == 'catalog-composite/3.0':
+            if selected.payload.get('format') in ('catalog-composite/3.0', 'catalog-composite/4.0'):
                 for kind in ('w2_delta', 'b2_delta'):
                     for identity in selected.payload[kind]:
                         selected.payload[kind][identity]  # verify all detached groups during explicit binding
+            if selected.payload.get('format') == 'catalog-composite/4.0':
+                for kind in ('w2_overrides', 'b3_overrides'):
+                    for identity in selected.payload[kind]:
+                        selected.payload[kind][identity]
             generation = selected.manifest_digest
         return {'generation': generation, 'accepted_incremental': len(accepted), 'staged': staged_count}
     except Exception as exc:
