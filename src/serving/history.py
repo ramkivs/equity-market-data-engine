@@ -80,14 +80,13 @@ request) with its check id.
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
 import os
-import tempfile
 from typing import Dict, List, Optional, Tuple
 
-from .paths import validate_roots, overlaps
+from .paths import validate_roots, overlaps, validate_store_root
+from .atomic import atomic_write_text
 from .baseline import Baseline
 from .index import canonical_json
 from .query import QueryError
@@ -119,23 +118,7 @@ def _sha256_text(text: str) -> str:
 
 
 def _atomic_write_text(path: str, text: str) -> None:
-    """Write ``text`` via a temp file in the same directory + atomic replace.
-
-    A crash mid-write can therefore never leave a partial history file or
-    sidecar; the temp name is never persisted (renamed or unlinked), so the
-    deterministic-output contract is unaffected. (Same convention as the
-    saved-query store; per-module helper, as in the serving package.)
-    """
-    directory = os.path.dirname(path) or "."
-    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".%s." % os.path.basename(path), suffix=".part")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
-            handle.write(text)
-        os.replace(tmp, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
+    atomic_write_text(path, text)
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +217,7 @@ def load_history(root: str) -> dict:
 def save_history_document(root: str, document: dict) -> str:
     """Validate and atomically persist ``document``; returns the store sha256."""
     _validate_document(document, "query-history store")
-    validate_roots(state=root)
+    validate_store_root(root, "history")
     os.makedirs(root, exist_ok=True)
     text = canonical_json(document) + "\n"
     digest = _sha256_text(text)

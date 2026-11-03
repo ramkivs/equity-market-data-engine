@@ -1,6 +1,8 @@
 """B1 regressions: synthetic packages and disposable state only."""
 import json
 import os
+import queue
+import threading
 import subprocess
 import sys
 import tempfile
@@ -152,6 +154,74 @@ class StateSafetyTests(unittest.TestCase):
             load_index(str(self.state), self.baseline)
         _ensure_index(self.baseline, str(self.state))
         self.assertEqual(load_index(str(self.state), self.baseline)[0], self.document)
+
+    def test_root_only_writers_reject_existing_other_stores(self):
+        from serving.history import save_history_document
+        self.assertFalse(self.saved.exists())
+        with self.assertRaises(RootLayoutError):
+            create_saved(str(self.state), 'a', 'Q8-data-quality', {})
+        with self.assertRaises(RootLayoutError):
+            create_saved(str(self.state / 'nested'), 'a', 'Q8-data-quality', {})
+        create_saved(str(self.saved), 'a', 'Q8-data-quality', {})
+        with self.assertRaises(RootLayoutError):
+            write_index(str(self.saved), self.document)
+        with self.assertRaises(RootLayoutError):
+            save_history_document(str(self.saved), {'format': 'serving-query-history/1.0', 'entries': [], 'next_seq': 1})
+        self.assertEqual(load_saved(str(self.saved))['format'], 'serving-saved-queries/1.0')
+
+    def test_ui_external_cwd_restart_reuses_state_and_preserves_stores(self):
+        create_saved(str(self.saved), 'a', 'Q8-data-quality', {})
+        record_execution(str(self.hist), 'Q8-data-quality', {}, self.baseline, str(self.state))
+        before_package = self.package_snapshot()
+        paths = [self.state / 'serving_index.json', self.state / 'serving_index.sha256',
+                 self.saved / 'saved_queries.json', self.saved / 'saved_queries.sha256',
+                 self.hist / 'query_history.json', self.hist / 'query_history.sha256']
+        before = [(path.read_bytes(), path.stat().st_mtime_ns) for path in paths]
+        env = dict(os.environ, PYTHONPATH=str(REPO / 'src'), PYTHONDONTWRITEBYTECODE='1', PYTHONUNBUFFERED='1')
+        command = [sys.executable, '-m', 'ui.serve', '--package', str(self.pkg),
+                   '--state', str(self.state), '--saved-state', str(self.saved),
+                   '--history-state', str(self.hist), '--repo', str(REPO), '--port', '0']
+        # A real subprocess, launched from outside the repository; stop it after
+        # its ready line, without waiting for network traffic or altering state.
+        proc = subprocess.Popen(command, cwd=str(self.root), env=env, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True)
+        lines = queue.Queue()
+        reader = threading.Thread(target=lambda: lines.put(proc.stdout.readline()), daemon=True)
+        reader.start()
+        try:
+            try:
+                line = lines.get(timeout=20)
+            except queue.Empty:
+                self.fail('UI did not report readiness within 20 seconds')
+            self.assertEqual(json.loads(line)['result'], 'ready', line)
+        finally:
+            proc.terminate()
+            proc.communicate(timeout=10)
+            reader.join(timeout=1)
+        self.assertEqual(before, [(path.read_bytes(), path.stat().st_mtime_ns) for path in paths])
+        self.assertEqual(before_package, self.package_snapshot())
+
+    def test_interrupted_user_store_pair_fails_closed_without_deletion(self):
+        from serving import saved, history
+        create_saved(str(self.saved), 'a', 'Q8-data-quality', {})
+        record_execution(str(self.hist), 'Q8-data-quality', {}, self.baseline, str(self.state))
+        for module, root, call, loader, error in (
+            (saved, self.saved, lambda: saved.create_saved(str(self.saved), 'b', 'Q8-data-quality', {}), saved.load_saved, saved.SavedQueryError),
+            (history, self.hist, lambda: history.record_execution(str(self.hist), 'Q8-data-quality', {}, self.baseline, str(self.state)), history.load_history, history.HistoryError),
+        ):
+            original = module._atomic_write_text
+            calls = []
+            def interrupt(path, text):
+                calls.append(path)
+                if len(calls) == 2:
+                    raise OSError('simulated interrupted sidecar publication')
+                return original(path, text)
+            with self.subTest(module=module.__name__), patch.object(module, '_atomic_write_text', side_effect=interrupt):
+                with self.assertRaises(OSError):
+                    call()
+                with self.assertRaises(error):
+                    loader(str(root))
+                self.assertTrue(all(Path(path).is_file() for path in calls))
 
     def test_external_cwd_d01_and_explicit_root(self):
         original = os.getcwd()

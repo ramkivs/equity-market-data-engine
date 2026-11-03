@@ -76,17 +76,16 @@ query never writes to the store (C2(a)).
 
 from __future__ import annotations
 
-import contextlib
 import datetime
 import hashlib
 import json
 import os
 import re
-import tempfile
 from typing import Dict, List, Optional, Tuple
 
 from .archive import ARCHIVE_QUERY_ID, load_d01_inventory, query_archive_inventory
-from .paths import validate_roots, overlaps
+from .paths import validate_roots, overlaps, validate_store_root
+from .atomic import atomic_write_text
 from .baseline import Baseline
 from .detail import RECORD_DETAIL_QUERY_ID, query_record_detail
 from .index import canonical_json, load_index
@@ -176,23 +175,7 @@ def _sha256_text(text: str) -> str:
 
 
 def _atomic_write_text(path: str, text: str) -> None:
-    """Write ``text`` via a temp file in the same directory + atomic replace.
-
-    A crash mid-write can therefore never leave a partial store file or sidecar:
-    the visible state is either the previous complete state or the new complete
-    state. The temp name is never persisted (it is renamed or unlinked), so the
-    deterministic-output contract is unaffected.
-    """
-    directory = os.path.dirname(path) or "."
-    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".%s." % os.path.basename(path), suffix=".part")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
-            handle.write(text)
-        os.replace(tmp, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
+    atomic_write_text(path, text)
 
 
 # ---------------------------------------------------------------------------
@@ -381,7 +364,7 @@ def load_saved(root: str) -> dict:
 def save_document(root: str, document: dict) -> str:
     """Validate and atomically persist ``document``; returns the store sha256."""
     _validate_document(document, "saved-query store")
-    validate_roots(state=root)
+    validate_store_root(root, "saved")
     os.makedirs(root, exist_ok=True)
     text = canonical_json(document) + "\n"
     digest = _sha256_text(text)

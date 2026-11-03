@@ -560,9 +560,11 @@ class RebuildIsolationTests(SavedBase):
         self.assertEqual(ctx.exception.check, "rebuild-refuse")
 
     def test_same_root_execution_fails_closed(self):
-        # a store placed INSIDE the derived-state root is refused at execution,
-        # where both roots are in scope (the guard fires before any load)
-        create_saved(self.state, "q3", "Q3-instrument", {"symbol": "RELIANCE", "series": "EQ"})
+        # Refuse creation in an existing index root as well as execution with
+        # equal roots, before either operation can change state.
+        from serving.paths import RootLayoutError
+        with self.assertRaises(RootLayoutError):
+            create_saved(self.state, "q3", "Q3-instrument", {"symbol": "RELIANCE", "series": "EQ"})
         self.assertSavedRaises(
             execute_saved, self.state, "q3", self.handle, self.state, check="saved-query-conflict"
         )

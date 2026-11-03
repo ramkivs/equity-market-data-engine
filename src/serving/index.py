@@ -20,12 +20,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import tempfile
-import contextlib
 from typing import Optional, Tuple
 
 from .baseline import Baseline
-from .paths import validate_roots
+from .paths import validate_roots, validate_store_root
+from .atomic import atomic_write_text
 
 INDEX_FILENAME = "serving_index.json"
 INDEX_DIGEST_FILENAME = "serving_index.sha256"
@@ -47,17 +46,7 @@ def canonical_json(obj) -> str:
 
 
 def _write_text(path: str, text: str) -> None:
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix="." + os.path.basename(path) + ".", suffix=".part")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
-            handle.write(text)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
+    atomic_write_text(path, text, sync=True)
 
 
 def _sha256_text(text: str) -> str:
@@ -178,7 +167,7 @@ def write_index(state_dir: str, document: dict) -> str:
     Returns the index file's sha256. The state directory is created if absent and
     must live OUTSIDE the baseline package (never inside it).
     """
-    validate_roots(state=state_dir)
+    validate_store_root(state_dir, "state")
     os.makedirs(state_dir, exist_ok=True)
     text = canonical_json(document) + "\n"
     digest = _sha256_text(text)

@@ -41,6 +41,33 @@ def validate_roots(**roots):
             current = parent
 
 
+_STORE_FILES = {
+    "state": ("serving_index.json", "serving_index.sha256"),
+    "saved": ("saved_queries.json", "saved_queries.sha256"),
+    "history": ("query_history.json", "query_history.sha256"),
+}
+
+
+def validate_store_root(root, role):
+    """Reject an existing different store at this root or an ancestor.
+
+    Root-only operations cannot know other unprovided, empty roots. The UI and
+    the CLI's four-root configuration provide complete pairwise validation.
+    """
+    validate_roots(**{role: root})
+    current = resolved(root)
+    while True:
+        for other, names in _STORE_FILES.items():
+            if other != role:
+                for name in names:
+                    if os.path.lexists(os.path.join(current, name)):
+                        raise RootLayoutError("root-layout: %s root is inside or equal to an existing %s store: %s" % (role, other, current))
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+
+
 def repository_root(root=None):
     return resolved(root if root is not None else os.path.join(os.path.dirname(__file__), '..', '..'))
 

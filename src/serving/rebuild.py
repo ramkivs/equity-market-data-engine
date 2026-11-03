@@ -15,7 +15,7 @@ import os
 from typing import Optional
 
 from .baseline import Baseline
-from .paths import validate_roots
+from .paths import validate_roots, validate_store_root
 from .index import (
     INDEX_DIGEST_FILENAME,
     INDEX_FILENAME,
@@ -35,6 +35,7 @@ def rebuild_state(baseline: Baseline, state_dir: str, replace_only: bool = False
     proof), False when the baseline content changed (the baseline always wins).
     """
     validate_roots(package=baseline.root, state=state_dir)
+    validate_store_root(state_dir, "state")
     before: Optional[str] = None
     if os.path.isdir(state_dir):
         present = set(os.listdir(state_dir))
