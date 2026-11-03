@@ -556,7 +556,7 @@ def _validate_identity_document(doc: object, context: str) -> str:
     return security_id
 
 
-def parse_associations(baseline: Baseline) -> Optional[list]:
+def parse_associations(baseline: Baseline, security_id: Optional[str] = None) -> Optional[list]:
     """Parse ``w2/associations.jsonl`` (class-(2) W2 output) or report it absent.
 
     Returns ``None`` when the file is **absent** — a legitimate package state
@@ -572,13 +572,13 @@ def parse_associations(baseline: Baseline) -> Optional[list]:
     """
     if hasattr(baseline, 'payload'):
         if baseline.payload.get('format') in ('catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0', 'catalog-composite/14.0'):
-            if baseline.payload.get('format') in ('catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0', 'catalog-composite/14.0'):
+            if security_id is None and baseline.payload.get('format') in ('catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0', 'catalog-composite/14.0'):
                 from .persistent_index_map import verify_derived_references
                 try:
                     verify_derived_references(baseline.payload)
                 except ValueError as exc:
                     raise QueryError('composite-unavailable', 'derived reference census invalid: %s' % exc) from exc
-            return _catalog_associations(baseline)
+            return _catalog_associations(baseline, security_id)
         return list(enumerate(baseline.payload['w2'], start=1))
     path = baseline.path(ASSOCIATIONS_FILE)
     if not os.path.exists(path):
@@ -605,13 +605,20 @@ def parse_associations(baseline: Baseline) -> Optional[list]:
     return documents
 
 
-def _catalog_associations(baseline):
+def _catalog_associations(baseline, security_id=None):
     """Stream original W2 documents with the pinned affected-ID overrides."""
     overrides = baseline.payload['w2_overrides']
     path = baseline.original.path(ASSOCIATIONS_FILE)
     def documents():
         seen = set()
         last_line = 0
+        if security_id is not None and security_id:
+            # Authenticate presence and absence in both trees for the selected
+            # identity; a missing override must never hide published deltas.
+            has_delta = security_id in baseline.payload['w2_delta'] if 'w2_delta' in baseline.payload else False
+            has_override = security_id in overrides
+            if has_delta and not has_override:
+                raise QueryError('composite-unavailable', 'incremental override reference census mismatch')
         with open(path, encoding='utf8') as handle:
             for line_number, text in enumerate(handle, 1):
                 if not text.strip():
@@ -625,18 +632,25 @@ def _catalog_associations(baseline):
                     raise QueryError('associations-scan', 'duplicate original identity')
                 seen.add(identity)
                 last_line = line_number
+                if security_id is not None and identity != security_id:
+                    continue
                 selected = overrides.get(identity, doc)
                 if selected is not None:
                     if _validate_identity_document(selected, 'catalog generation override') != identity:
                         raise QueryError('associations-scan', 'override identity mismatch')
                     yield line_number, selected
+        if security_id is not None and (security_id in seen or not security_id or security_id not in overrides):
+            return
         for identity in sorted(set(overrides) - seen):
             selected = overrides[identity]
             if selected is not None:
                 if _validate_identity_document(selected, 'catalog generation override') != identity:
                     raise QueryError('associations-scan', 'override identity mismatch')
                 last_line += 1
-                yield last_line, selected
+                if security_id is None or identity == security_id:
+                    yield last_line, selected
+                    if security_id is not None:
+                        return
     return documents()
 
 
@@ -674,7 +688,7 @@ def query_associations(
         )
 
     if documents is _UNPARSE:
-        documents = parse_associations(baseline)
+        documents = parse_associations(baseline, security_id)
     if documents is None:
         return ()
 

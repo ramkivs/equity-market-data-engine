@@ -254,7 +254,7 @@ def cmd_query(args) -> int:
             rows = query_instrument(handle, document, args.symbol, args.series, year=args.year)
             output = {"query": QUERY_ID, "result_count": len(rows), "rows": list(rows)}
         elif q5:
-            documents = parse_associations(handle)
+            documents = parse_associations(handle, args.identity)
             rows = query_associations(
                 handle,
                 document,

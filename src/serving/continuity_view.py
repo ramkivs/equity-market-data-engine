@@ -52,7 +52,12 @@ class _CatalogGroups:
 
     def get(self, identity, default=None):
         overrides = self.baseline.payload['b3_overrides']
-        if identity in overrides:
+        has_override = identity in overrides
+        has_delta = identity in self.baseline.payload['b2_delta'] if 'b2_delta' in self.baseline.payload else False
+        if has_delta and not has_override:
+            from .query import QueryError
+            raise QueryError('composite-unavailable', 'incremental override reference census mismatch')
+        if has_override:
             return overrides[identity]
         from .continuity_catalog import _metadata, open_catalog, observations_for_identity
         db = None

@@ -86,6 +86,67 @@ class DerivedReferenceTreesTests(unittest.TestCase):
         self.assertTrue(traversed)  # remaining candidate/reference/index materialization still occurs
         self.assertFalse(roots.intersection(traversed))
 
+    def test_selected_identity_q5_preserves_results_without_derived_census_scan(self):
+        from serving.query import parse_associations, query_associations
+        from serving.persistent_index_map import PinnedReferenceMap
+        self.init(); publish(*self.args)
+        identities = ('INE002A01018', 'INE009A01021', 'INE000000006', 'NOT-PRESENT', '')
+        expected = {}
+        for identity in identities:
+            selected, index = active_snapshot(self.baseline, self.args[1], self.args[2])
+            expected[identity] = query_associations(selected, index, security_id=identity,
+                                                    documents=parse_associations(selected))
+        with mock.patch.object(PinnedReferenceMap, '_materialize', side_effect=AssertionError('derived census scanned')):
+            for identity in identities:
+                result = execute_query_definition('Q5-association', {'security_id':identity}, self.baseline, self.args[2])
+                self.assertEqual(result['records'], list(expected[identity]))
+
+    def test_new_identity_q5_keeps_published_line_number_and_pinned_snapshot(self):
+        from tests import serving_fixtures as fixtures
+        from tests import test_incremental_staging as staging
+        from serving.incremental_staging import prepare
+        from serving.query import parse_associations, query_associations
+        self.init(); publish(*self.args)
+        data = fixtures._member_bytes('fix-udf-2024-03-05.csv').replace(b'2024-03-05', b'2025-03-06').replace(b'INE002A01018', b'INE040A01034')
+        path = Path(self.args[5]['UDIFF'], 'new-identity.zip')
+        path.write_bytes(staging.archive_bytes('new.csv', data))
+        prepare(*self.args, 'UDIFF', path.name, '2025-03-06', 'new-identity')
+        publish(*self.args)
+        pinned = active_snapshot(self.baseline, self.args[1], self.args[2])
+        expected = query_associations(pinned[0], pinned[1], security_id='INE040A01034', documents=parse_associations(pinned[0]))
+        self.assertTrue(expected)
+        selected = execute_query_definition('Q5-association', {'security_id':'INE040A01034'}, self.baseline, self.args[2], composite=pinned)
+        self.assertEqual(selected['records'], list(expected))
+        path.unlink()
+        path = Path(self.args[5]['UDIFF'], 'new-identity-next.zip')
+        path.write_bytes(staging.archive_bytes('next.csv', data.replace(b'2025-03-06', b'2025-03-07')))
+        prepare(*self.args, 'UDIFF', path.name, '2025-03-07', 'new-identity-next')
+        publish(*self.args)
+        self.assertEqual(execute_query_definition('Q5-association', {'security_id':'INE040A01034'}, self.baseline, self.args[2], composite=pinned), selected)
+
+    def test_selected_q5_defers_unrelated_derived_corruption_to_full_verification(self):
+        import serving.persistent_index_map as trie
+        from serving.composite_binding import ensure_registry_binding
+        self.init(); publish(*self.args)
+        selected = active_snapshot(self.baseline, self.args[1], self.args[2])[0]
+        root = selected.payload['derived_trees']['w2_delta']['root']
+        with sqlite3.connect(self.dbpath()) as db:
+            paths = {}
+            for identity in ('INE002A01018', 'INE000000006'):
+                visited = set(); original = trie._read
+                def track(conn, digest, depth):
+                    visited.add(digest)
+                    return original(conn, digest, depth)
+                with mock.patch.object(trie, '_read', side_effect=track):
+                    self.assertIsNotNone(trie.lookup(db, root, identity))
+                paths[identity] = visited
+            unrelated = next(iter(paths['INE000000006'] - paths['INE002A01018']))
+            db.execute('UPDATE composite_blobs SET content=? WHERE digest=?', ('corrupt', unrelated))
+        result = execute_query_definition('Q5-association', {'security_id':'INE002A01018'}, self.baseline, self.args[2])
+        self.assertGreater(result['record_count'], 0)
+        with self.assertRaisesRegex(QueryError, 'reference tree invalid'):
+            ensure_registry_binding(self.baseline, self.args[2], self.args[1])
+
     def test_missing_override_for_delta_fails_closed_during_q5_and_binding(self):
         from serving.composite_binding import ensure_registry_binding
         from serving.persistent_index_map import insert

@@ -528,7 +528,7 @@ def execute_query_definition(
         rows = query_filters(baseline, index_document, params["filters"])
         return {"query": FILTER_QUERY_ID, "filters": params["filters"], "result_count": len(rows), "rows": list(rows)}
     if mode == ASSOCIATIONS_MODE:
-        documents = parse_associations(baseline)
+        documents = parse_associations(baseline, params.get("security_id"))
         rows = query_associations(
             baseline,
             index_document,
