@@ -39,18 +39,40 @@ def get(db, digest):
 
 
 class BlobMap(Mapping):
-    def __init__(self, path, references):
+    def __init__(self, path, references, expected=None):
         self.path = path
-        self.references = dict(references)
+        from .persistent_index_map import PinnedReferenceMap
+        self.references = references if isinstance(references, PinnedReferenceMap) else dict(references)
+        self.expected = dict(expected) if expected is not None else None
 
     def __iter__(self):
-        return iter(self.references)
+        return iter(self.expected if self.expected is not None else self.references)
 
     def __len__(self):
         return len(self.references)
 
+    def _reference(self, key):
+        if self.expected is not None and key not in self.expected:
+            raise KeyError(key)
+        try:
+            digest = self.references[key]
+        except KeyError as exc:
+            if self.expected is not None:
+                raise QueryError('composite-unavailable', 'incremental blob reference missing') from exc
+            raise
+        if self.expected is not None and digest != self.expected[key]:
+            raise QueryError('composite-unavailable', 'incremental blob reference mismatch')
+        return digest
+
+    def __contains__(self, key):
+        try:
+            self._reference(key)
+            return True
+        except KeyError:
+            return False
+
     def __getitem__(self, key):
-        digest = self.references[key]
+        digest = self._reference(key)
         if os.path.islink(self.path) or not os.path.isfile(self.path):
             raise QueryError('composite-unavailable', 'incremental blob registry missing or unsafe')
         try:
@@ -131,7 +153,7 @@ class GroupMap(BlobMap):
     def __init__(self, path, references, kind, sources):
         super().__init__(path, references)
         self.kind = kind
-        self.sources = frozenset(sources)
+        self.sources = sources
 
     def __getitem__(self, key):
         if key not in self.references:

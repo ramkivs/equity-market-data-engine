@@ -106,6 +106,9 @@ def validate_registry(baseline, state_root, registry_root, recover_pending=False
             delta, evidence = selected.payload.get('delta'), selected.payload.get('evidence')
             if not isinstance(candidates, list) or not isinstance(delta, Mapping) or not isinstance(evidence, Mapping):
                 raise ValueError('active generation evidence is invalid')
+            if selected.payload.get('format') in ('catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0', 'catalog-composite/14.0'):
+                from .composite_blobs import validate_references
+                validate_references({'candidates': candidates, 'delta': dict(delta.references), 'evidence': dict(evidence.references)})
             identities, sources, digests = set(), set(), set()
             def retained_rows():
                 for item in candidates:
@@ -126,6 +129,9 @@ def validate_registry(baseline, state_root, registry_root, recover_pending=False
                     pass
             if identities != set(accepted) or set(delta) != sources or set(evidence) != digests:
                 raise ValueError('active generation has missing or extra accepted evidence')
+            if selected.payload.get('format') in ('catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0', 'catalog-composite/14.0'):
+                from .persistent_index_map import verify_derived_references
+                verify_derived_references(selected.payload)
             if selected.payload.get('format') in ('catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0', 'catalog-composite/14.0'):
                 for kind in ('w2_delta', 'b2_delta'):
                     for identity in selected.payload[kind]:

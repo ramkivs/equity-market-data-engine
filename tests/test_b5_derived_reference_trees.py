@@ -65,6 +65,51 @@ class DerivedReferenceTreesTests(unittest.TestCase):
         self.assertEqual(pinned[0].payload['w2_delta'][affected], old_rows)
         self.assertEqual(current[0].payload['derived_trees']['w2_delta']['count'], len(current[0].payload['w2_delta']))
 
+    def test_unrelated_readers_do_not_materialize_derived_reference_trees(self):
+        self.init(); first = publish(*self.args)
+        with sqlite3.connect(self.dbpath()) as db:
+            payload = json.loads(db.execute('SELECT payload FROM composite_generations WHERE id=?', (first['generation'],)).fetchone()[0])
+        roots = {header['root'] for header in list(payload['derived_trees'].values()) + list(payload['reference_trees'].values()) if header['root'] is not None}
+        import serving.persistent_index_map as trie
+        original = trie.entries
+        traversed = []
+        def tracked(db, root):
+            traversed.append(root)
+            if root in roots:
+                raise AssertionError('unrelated query traversed derived reference tree')
+            return original(db, root)
+        with mock.patch.object(trie, 'entries', side_effect=tracked):
+            one = execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])
+            four = execute_query_definition('Q4-filter', {'filters': {'symbol':'RELIANCE'}}, self.baseline, self.args[2])
+        self.assertGreater(one['summary']['row_count'], 0)
+        self.assertGreater(four['result_count'], 0)
+        self.assertTrue(traversed)  # remaining candidate/reference/index materialization still occurs
+        self.assertFalse(roots.intersection(traversed))
+
+    def test_missing_override_for_delta_fails_closed_during_q5_and_binding(self):
+        from serving.composite_binding import ensure_registry_binding
+        from serving.persistent_index_map import insert
+        self.init(); publish(*self.args)
+        current = active_snapshot(self.baseline, self.args[1], self.args[2])[0]
+        refs = dict(current.payload['b3_overrides'].references)
+        identity = next(iter(current.payload['b2_delta'].references))
+        self.assertIn(identity, refs)
+        refs['ADDED-OTHER-IDENTITY'] = refs.pop(identity)
+        with sqlite3.connect(self.dbpath()) as db:
+            text = db.execute('SELECT g.payload FROM composite_active a JOIN composite_generations g ON g.id=a.generation').fetchone()[0]
+            payload = json.loads(text); root = None
+            for key, value in sorted(refs.items()):
+                root = insert(db, root, key, {'digest': value})
+            payload['derived_trees']['b3_overrides']['root'] = root
+            text = _json(payload); generation = _sha(text)
+            db.execute('INSERT INTO composite_generations VALUES (?,?)', (generation, text))
+            db.execute('UPDATE composite_active SET generation=?', (generation,))
+        execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])
+        with self.assertRaisesRegex(QueryError, 'override reference census mismatch'):
+            execute_query_definition('Q5-association', {'security_id':identity}, self.baseline, self.args[2])
+        with self.assertRaisesRegex(QueryError, 'override reference census mismatch'):
+            ensure_registry_binding(self.baseline, self.args[2], self.args[1])
+
     def test_each_corrupt_tree_fails_selection_and_affected_publication(self):
         for i, name in enumerate(DERIVED_NAMES):
             with self.subTest(name=name):
@@ -75,8 +120,13 @@ class DerivedReferenceTreesTests(unittest.TestCase):
                 root = selected[0].payload['derived_trees'][name]['root']
                 with sqlite3.connect(self.dbpath()) as db:
                     db.execute('UPDATE composite_blobs SET content=? WHERE digest=?', ('broken', root))
-                with self.assertRaisesRegex(QueryError, 'blob references invalid'):
-                    execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])
+                # Unrelated Q1 no longer traverses derived identity trees.
+                execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])
+                with self.assertRaisesRegex(QueryError, 'reference tree invalid'):
+                    execute_query_definition('Q5-association', {'security_id':'INE002A01018'}, self.baseline, self.args[2])
+                from serving.composite_binding import ensure_registry_binding
+                with self.assertRaisesRegex(QueryError, 'reference tree invalid'):
+                    ensure_registry_binding(self.baseline, self.args[2], self.args[1])
                 self.next_delta()
                 with self.assertRaisesRegex(RegistryError, 'tree node corrupt'):
                     publish(*self.args)

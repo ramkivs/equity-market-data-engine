@@ -61,7 +61,7 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   to in-flight readers. The active pointer, new blobs, new accepted records and
   generation commit in the same transaction. Format 9 stores their references in
   two content-addressed tries: publication updates only the paths for new inputs,
-  while selected readers traverse and validate both complete reference censuses.
+  while readers verify selected references against the pinned candidate records.
   Existing format-1 catalog composites
   migrate once from their retained inline deltas, with digest/accepted checks and
   no historical canonical or accepted source archive reads. Format-2 generations
@@ -118,8 +118,9 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   publication writes only re-derived overrides; unaffected override bytes are
   neither copied nor read. Readers resolve the generation-pinned digest on
   access, and old versions remain available to pinned readers. Override reference
-  maps also use immutable tries; explicit registry binding verifies all retained
-  override blobs.
+  maps also use immutable tries; Q5 still validates the complete derived
+  reference census and explicit registry binding verifies all retained override
+  blobs.
 * Generation JSON pins immutable incremental ticker/series, identity/series and
   ticker-directory tree roots, rather than embedding either ticker census.
   Publication merges affected groups and checks reciprocal prior observations;
@@ -161,8 +162,9 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   without sealing the index will cause publication to fail closed until recovery.
 * This is **not yet fully delta-only**: publication still loads the baseline
   serving index. Affected
-  ticker/identity groups can grow without bound and are rewritten as whole groups. Readers still compose and scan the complete index metadata, though
-  neither path rereads historical canonical rows for this work. Very large or numerous deltas can still hit memory or SQLite
+  ticker/identity groups can grow without bound and are rewritten as whole groups.
+  Readers still materialize the candidate census and compose and scan the complete
+  index metadata, though neither path rereads historical canonical rows for this work. Very large or numerous deltas can still hit memory or SQLite
   single-value limits. No scalable long-running lifecycle is established.
 * The original qualified historical canonical baseline is not reread during
   catalog-backed publication. Q3/Q4 still scan candidate historical row files
@@ -220,7 +222,7 @@ This exceeds the former total 20,000-row guard, but is **not** an M2-scale test
 or a resource claim for approximately 5.7 million rows. No qualified M2 data was
 accessed or modified, and no historical archive was ingested.
 
-Linux disposable-fixture suite: **1122 tests run, 14 skipped**; existing
+Linux disposable-fixture suite: **1126 tests run, 14 skipped**; existing
 unrelated ResourceWarnings remain. Windows validation remains pending.
 
 The scoped-reader tests exercise calendar gap/holiday preservation, UDiFF date
@@ -331,3 +333,13 @@ complete ticker-series ranges, absence, corruption deferral and full binding
 verification, no manifest scans during ordinary publication/reads, v13 migration
 rollback and pinned readers, and explicit missing-node recovery. Bootstrap uses
 the verified compact ticker proof manifest, never historical canonical rows.
+
+Reader snapshots now pin the existing row/evidence and derived-reference trie
+roots without traversing all six trees. Selected row/evidence references are
+checked against the generation's candidate digests and cached per snapshot;
+selected derived lookups verify their paths. Q5 still fully validates the four
+derived reference censuses because it streams all W2 associations and must
+include new identities. Explicit registry binding fully traverses and compares
+both reference censuses and all four derived censuses. Unrelated corruption is
+therefore detected on access, Q5, or explicit verification, rather than every
+Q1 request. Candidate records and the composed index are still materialized.

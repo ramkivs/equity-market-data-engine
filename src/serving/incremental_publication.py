@@ -275,25 +275,32 @@ def active_snapshot(baseline, registry_root, state):
         if payload['format'] in ('catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0', 'catalog-composite/14.0'):
             from .composite_blobs import BlobMap, GroupMap, OverrideMap, validate_references, validate_group_references, validate_override_references
             try:
+                expected_references = None
                 if payload['format'] in ('catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0', 'catalog-composite/14.0'):
-                    from .persistent_index_map import reference_dict, validate_reference_trees
+                    from .persistent_index_map import PinnedReferenceMap, validate_reference_trees
                     validate_reference_trees(payload.get('reference_trees'), payload.get('candidates'))
+                    candidates = payload['candidates']
+                    expected_references = {
+                        'delta': {'incremental/' + item['digest'] + '.rows.jsonl': item['rows_sha256'] for item in candidates},
+                        'evidence': {item['digest']: item['evidence_sha256'] for item in candidates}}
+                    validate_references({'candidates': candidates, **expected_references})
                     for name in ('delta', 'evidence'):
-                        payload[name] = reference_dict(db, payload['reference_trees'][name])
-                validate_references(payload)
+                        payload[name] = PinnedReferenceMap(path, payload['reference_trees'][name])
+                else:
+                    validate_references(payload)
                 if payload['format'] in ('catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0', 'catalog-composite/14.0'):
-                    from .persistent_index_map import DERIVED_NAMES, validate_derived_trees, reference_dict
+                    from .persistent_index_map import DERIVED_NAMES, validate_derived_trees, PinnedReferenceMap
                     validate_derived_trees(payload.get('derived_trees'))
                     for name in DERIVED_NAMES:
-                        payload[name] = reference_dict(db, payload['derived_trees'][name])
-                if payload['format'] in ('catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0', 'catalog-composite/14.0'):
+                        payload[name] = PinnedReferenceMap(path, payload['derived_trees'][name])
+                if payload['format'] in ('catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0'):
                     validate_group_references(payload)
-                if payload['format'] in ('catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0', 'catalog-composite/14.0'):
+                if payload['format'] in ('catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0'):
                     validate_override_references(payload)
-            except (ValueError, sqlite3.Error) as exc:
+            except (ValueError, KeyError, TypeError, sqlite3.Error) as exc:
                 raise RegistryError('active composite blob references invalid: %s' % exc) from exc
-            payload['delta'] = BlobMap(path, payload['delta'])
-            payload['evidence'] = BlobMap(path, payload['evidence'])
+            payload['delta'] = BlobMap(path, payload['delta'], expected_references['delta'] if expected_references is not None else None)
+            payload['evidence'] = BlobMap(path, payload['evidence'], expected_references['evidence'] if expected_references is not None else None)
             if payload['format'] in ('catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0', 'catalog-composite/14.0'):
                 payload['w2_delta'] = GroupMap(path, payload['w2_delta'], 'w2', payload['delta'])
                 payload['b2_delta'] = GroupMap(path, payload['b2_delta'], 'b2', payload['delta'])

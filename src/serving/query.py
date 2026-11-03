@@ -572,6 +572,12 @@ def parse_associations(baseline: Baseline) -> Optional[list]:
     """
     if hasattr(baseline, 'payload'):
         if baseline.payload.get('format') in ('catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0', 'catalog-composite/14.0'):
+            if baseline.payload.get('format') in ('catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0', 'catalog-composite/14.0'):
+                from .persistent_index_map import verify_derived_references
+                try:
+                    verify_derived_references(baseline.payload)
+                except ValueError as exc:
+                    raise QueryError('composite-unavailable', 'derived reference census invalid: %s' % exc) from exc
             return _catalog_associations(baseline)
         return list(enumerate(baseline.payload['w2'], start=1))
     path = baseline.path(ASSOCIATIONS_FILE)

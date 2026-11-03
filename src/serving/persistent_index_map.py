@@ -6,6 +6,8 @@ content-addressed; omitted, miskeyed or damaged nodes fail closed when read.
 """
 import hashlib
 import json
+from contextlib import contextmanager
+from collections.abc import Mapping
 
 from .composite_blobs import get, put, sha
 from .incremental_registry import _json
@@ -246,3 +248,85 @@ def derived_trees_from_payload(db, payload):
         for key, digest in sorted(payload[name].items()):
             view[key] = digest
     return trees
+
+
+class PinnedReferenceMap(Mapping):
+    """Read-only generation-pinned references, materialized only on iteration.
+
+    A point lookup verifies just its immutable trie path. Complete traversal is
+    still available to the explicit verifier and operations requiring a census.
+    """
+    def __init__(self, path, header):
+        import copy
+        validate_reference_header(header)
+        self.path = path
+        self.header = copy.deepcopy(header)
+        self._all = None
+        self._cache = {}
+
+    @contextmanager
+    def _connection(self):
+        import os
+        import sqlite3
+        from urllib.parse import quote
+        if os.path.islink(self.path) or not os.path.isfile(self.path):
+            raise ValueError('reference registry missing or unsafe')
+        db = sqlite3.connect('file:' + quote(os.path.abspath(self.path), safe='/') + '?mode=ro', uri=True)
+        try:
+            yield db
+        finally:
+            db.close()
+
+    def _materialize(self):
+        from .query import QueryError
+        import sqlite3
+        if self._all is None:
+            try:
+                with self._connection() as db:
+                    self._all = reference_dict(db, self.header)
+            except (ValueError, sqlite3.Error, OSError) as exc:
+                raise QueryError('composite-unavailable', 'reference tree invalid: %s' % exc) from exc
+        return self._all
+
+    def __len__(self):
+        return self.header['count']
+
+    def __iter__(self):
+        return iter(self._materialize())
+
+    def keys(self):
+        return self._materialize().keys()
+
+    def __getitem__(self, key):
+        from .query import QueryError
+        import sqlite3
+        if self._all is not None:
+            return self._all[key]
+        if key in self._cache:
+            return self._cache[key]
+        try:
+            with self._connection() as db:
+                value = lookup(db, self.header['root'], key)
+            if value is None:
+                raise KeyError(key)
+            if set(value) != {'digest'} or not _digest(value['digest']):
+                raise ValueError('invalid reference tree value')
+            self._cache[key] = value['digest']
+            return value['digest']
+        except (ValueError, sqlite3.Error, OSError) as exc:
+            raise QueryError('composite-unavailable', 'reference tree invalid: %s' % exc) from exc
+
+    def __contains__(self, key):
+        try:
+            self[key]
+            return True
+        except KeyError:
+            return False
+
+
+def verify_derived_references(payload):
+    """Full cross-census verification for Q5 and explicit registry binding."""
+    from .composite_blobs import validate_group_references, validate_override_references
+    groups = {name: dict(payload[name].references) for name in DERIVED_NAMES}
+    validate_group_references(groups)
+    validate_override_references(groups)

@@ -70,14 +70,53 @@ class ReferenceTreePublicationTests(unittest.TestCase):
                 root = selected[0].payload['reference_trees'][name]['root']
                 with sqlite3.connect(self.dbpath()) as db:
                     db.execute('UPDATE composite_blobs SET content=? WHERE digest=?', ('broken', root))
-                with self.assertRaisesRegex(QueryError, 'blob references invalid'):
-                    execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])
+                execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])
+                digest = selected[0].payload['candidates'][0]['digest']
+                key = 'incremental/' + digest + '.rows.jsonl' if name == 'delta' else digest
+                with self.assertRaisesRegex(QueryError, 'reference tree invalid'):
+                    selected[0].payload[name][key]
+                from serving.composite_binding import ensure_registry_binding
+                with self.assertRaisesRegex(QueryError, 'reference tree invalid'):
+                    ensure_registry_binding(self.baseline, self.args[2], self.args[1])
                 self.next_delta()
                 with self.assertRaisesRegex(RegistryError, 'tree node corrupt'):
                     publish(*self.args)
                 with sqlite3.connect(self.dbpath()) as db:
                     self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], result['generation'])
                     self.assertEqual(db.execute('SELECT count(*) FROM staged_candidates').fetchone()[0], 2)
+
+    def test_mismatched_selected_reference_fails_closed_even_with_matching_count(self):
+        from serving.composite_binding import ensure_registry_binding
+        from serving.persistent_index_map import insert
+        self.init(); publish(*self.args)
+        selected = active_snapshot(self.baseline, self.args[1], self.args[2])[0]
+        digest = selected.payload['candidates'][0]['digest']
+        source = 'incremental/' + digest + '.rows.jsonl'
+        with sqlite3.connect(self.dbpath()) as db:
+            text = db.execute('SELECT g.payload FROM composite_active a JOIN composite_generations g ON g.id=a.generation').fetchone()[0]
+            payload = json.loads(text)
+            payload['reference_trees']['delta']['root'] = insert(db, None, source, {'digest':'a' * 64})
+            text = _json(payload); generation = _sha(text)
+            db.execute('INSERT INTO composite_generations VALUES (?,?)', (generation, text))
+            db.execute('UPDATE composite_active SET generation=?', (generation,))
+        execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])
+        snapshot = active_snapshot(self.baseline, self.args[1], self.args[2])[0]
+        with self.assertRaisesRegex(QueryError, 'blob reference mismatch'):
+            snapshot.payload['delta'][source]
+        with self.assertRaisesRegex(QueryError, 'blob reference mismatch'):
+            ensure_registry_binding(self.baseline, self.args[2], self.args[1])
+
+    def test_selected_reference_path_is_verified_once_per_snapshot(self):
+        import serving.persistent_index_map as trie
+        self.init(); publish(*self.args)
+        selected = active_snapshot(self.baseline, self.args[1], self.args[2])[0]
+        digest = selected.payload['candidates'][0]['digest']
+        source = 'incremental/' + digest + '.rows.jsonl'
+        with mock.patch.object(trie, 'lookup', wraps=trie.lookup) as lookup:
+            self.assertIn(source, selected.payload['delta'])
+            self.assertIn(source, selected.payload['delta'])
+            selected.payload['delta'][source]
+        self.assertEqual(lookup.call_count, 1)
 
     def test_missing_blob_table_reports_unavailable_not_sqlite_error(self):
         self.init(); publish(*self.args)

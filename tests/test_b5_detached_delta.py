@@ -105,7 +105,8 @@ class DetachedDeltaTests(unittest.TestCase):
         with self.assertRaisesRegex(QueryError, 'blob.*missing'):
             ensure_registry_binding(self.baseline, self.args[2], self.args[1])
 
-    def test_generation_reference_mismatch_fails_before_selection(self):
+    def test_generation_reference_mismatch_fails_selected_access_and_binding(self):
+        from serving.composite_binding import ensure_registry_binding
         self.init(); publish(*self.args)
         with sqlite3.connect(self.dbpath()) as db:
             text = db.execute('SELECT g.payload FROM composite_active a JOIN composite_generations g ON g.id=a.generation').fetchone()[0]
@@ -118,8 +119,12 @@ class DetachedDeltaTests(unittest.TestCase):
             bad = _json(payload); digest = _sha(bad)
             db.execute('INSERT INTO composite_generations VALUES (?,?)', (digest, bad))
             db.execute('UPDATE composite_active SET generation=?', (digest,))
+        execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])
+        selected = active_snapshot(self.baseline, self.args[1], self.args[2])[0]
         with self.assertRaisesRegex(QueryError, 'blob reference'):
-            execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])
+            selected.payload['delta'][source]
+        with self.assertRaisesRegex(QueryError, 'blob reference'):
+            ensure_registry_binding(self.baseline, self.args[2], self.args[1])
 
     def test_inline_generation_migrates_atomically_without_old_sources_or_baseline_rows(self):
         self.init(); publish(*self.args)
