@@ -174,6 +174,7 @@ def conflicts(baseline, registry_root, state, saved, history, source_roots):
 
 def main(argv=None):
     from .baseline import BaselineError, DEFAULT_M2_SPEC, open_baseline
+    from .index import ServingIndexError
     parser = argparse.ArgumentParser(description='Explicit source registry inspection; does not ingest or publish.')
     for name in ('package', 'registry', 'state', 'saved-state', 'history-state', 'legacy-root', 'udiff-root'):
         parser.add_argument('--' + name, required=True)
@@ -182,6 +183,8 @@ def main(argv=None):
     sub.add_parser('init', help='initialize from verified baseline manifest; never overwrite')
     sub.add_parser('conflicts', help='list durable unresolved findings')
     sub.add_parser('staged', help='list validated candidates that are not published')
+    sub.add_parser('draft', help='capture an isolated, non-serveable draft snapshot')
+    sub.add_parser('drafts', help='list non-serveable draft snapshots')
     stage = sub.add_parser('prepare', help='validate and stage a candidate; does not publish')
     stage.add_argument('--root', choices=('LEGACY', 'UDIFF'), required=True)
     stage.add_argument('--relative-path', required=True)
@@ -202,6 +205,9 @@ def main(argv=None):
             result = initialize(*common)
         elif args.operation == 'conflicts':
             result = conflicts(*common)
+        elif args.operation in ('draft', 'drafts'):
+            from .incremental_drafts import create_draft, list_drafts
+            result = create_draft(*common) if args.operation == 'draft' else list_drafts(*common)
         elif args.operation in ('prepare', 'staged'):
             from .incremental_staging import prepare, list_staged
             result = (prepare(*common, args.root, args.relative_path, args.date, args.scan_id)
@@ -210,7 +216,7 @@ def main(argv=None):
             result = inspect(*common, args.root, args.relative_path, args.date, args.scan_id, json.loads(args.current_bindings))
         print(_json({'result': 'pass', 'data': result}))
         return 0
-    except (ValueError, OSError, sqlite3.Error, BaselineError) as exc:
+    except (ValueError, OSError, sqlite3.Error, BaselineError, ServingIndexError) as exc:
         print(_json({'result': 'fail', 'detail': str(exc)}))
         return 2
 

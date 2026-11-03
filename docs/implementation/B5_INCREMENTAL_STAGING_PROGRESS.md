@@ -1,5 +1,8 @@
 # B5 incremental staging progress (OW-10 not complete)
 
+> Subsequent non-serveable draft work is documented in
+> `B5_COMPOSITE_DRAFT_PROGRESS.md`; OW-10 remains incomplete.
+
 This work continues the owner-authorized B5 effort from `591119b`; it does not
 replace the baseline registry or D21 conflict handling. **B5 is not closed.**
 
