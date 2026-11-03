@@ -243,7 +243,7 @@ def recover(baseline, state, registry, saved, history, source_roots):
         if row is None or generation_sha(row[1]) != row[0]:
             raise CatalogError('active generation missing or invalid')
         payload = json.loads(row[1])
-        if payload.get('format') not in ('catalog-composite/7.0', 'catalog-composite/8.0') or payload.get('baseline_manifest_sha256') != baseline.manifest_digest or not isinstance(payload.get('ticker_proofs_binding'), dict):
+        if payload.get('format') not in ('catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0') or payload.get('baseline_manifest_sha256') != baseline.manifest_digest or not isinstance(payload.get('ticker_proofs_binding'), dict):
             raise CatalogError('active generation has no valid ticker proof binding')
         catalog_db, catalog_meta = open_catalog(baseline, state)
         catalog_db.execute('BEGIN')

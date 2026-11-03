@@ -32,6 +32,7 @@ class DetachedDeltaTests(unittest.TestCase):
         payload['b2_delta'] = dict(payload['b2_delta'])
         payload['w2_overrides'] = dict(payload['w2_overrides'])
         payload['b3_overrides'] = dict(payload['b3_overrides'])
+        payload.pop('reference_trees')
         payload.pop('index_tree')
         payload.pop('ticker_proofs_binding')
         payload['symbol_catalog'] = {'observations': payload['symbol_catalog']['observations']}
@@ -54,7 +55,9 @@ class DetachedDeltaTests(unittest.TestCase):
         old_candidate = pinned[0].payload['candidates'][0]
         with sqlite3.connect(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT payload FROM composite_generations WHERE id=?', (first['generation'],)).fetchone()[0])
-            self.assertEqual(payload['delta'][source], old_candidate['rows_sha256'])
+            self.assertNotIn('delta', payload)
+            self.assertEqual(payload['reference_trees']['delta']['count'], 1)
+            self.assertEqual(pinned[0].payload['delta'].references[source], old_candidate['rows_sha256'])
             self.assertNotIn(old_text, _json(payload))
             first_count = db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0]
             self.assertGreater(first_count, 2)
@@ -101,8 +104,11 @@ class DetachedDeltaTests(unittest.TestCase):
         with sqlite3.connect(self.dbpath()) as db:
             text = db.execute('SELECT g.payload FROM composite_active a JOIN composite_generations g ON g.id=a.generation').fetchone()[0]
             payload = json.loads(text)
-            source = next(iter(payload['delta']))
-            payload['delta'][source] = '0' * 64
+            from serving.persistent_index_map import ReferenceTree
+            source = 'incremental/' + payload['candidates'][0]['digest'] + '.rows.jsonl'
+            header = {'root': None, 'count': 0}
+            ReferenceTree(db, header)[source] = '0' * 64
+            payload['reference_trees']['delta'] = header
             bad = _json(payload); digest = _sha(bad)
             db.execute('INSERT INTO composite_generations VALUES (?,?)', (digest, bad))
             db.execute('UPDATE composite_active SET generation=?', (digest,))

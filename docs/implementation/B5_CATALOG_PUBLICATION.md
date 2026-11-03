@@ -54,12 +54,15 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
 
 ## Scope limits — no B5 completion claim
 
-* Catalog-backed generation format 8 stores incremental canonical rows and
+* Catalog-backed generation format 9 stores incremental canonical rows and
   evidence once as content-addressed SQLite blobs. Later publications refer to
   existing blobs without reading or copying their contents. Readers verify each
   accessed blob against its generation-pinned digest; old blobs remain available
   to in-flight readers. The active pointer, new blobs, new accepted records and
-  generation commit in the same transaction. Existing format-1 catalog composites
+  generation commit in the same transaction. Format 9 stores their references in
+  two content-addressed tries: publication updates only the paths for new inputs,
+  while selected readers traverse and validate both complete reference censuses.
+  Existing format-1 catalog composites
   migrate once from their retained inline deltas, with digest/accepted checks and
   no historical canonical or accepted source archive reads. Format-2 generations
   migrate their inline identity projections, and format-3 generations migrate
@@ -71,7 +74,10 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   reconstructing delta file metadata and flags from verified retained deltas.
   A format-6 generation migrates its binding to format 7 without replaying
   its prior incremental rows or source archives. Format-7 index overlays migrate
-  to an immutable content-addressed trie in the publication transaction.
+  to an immutable content-addressed trie in the publication transaction. Format-8
+  row/evidence reference maps migrate once to their own immutable trie roots;
+  migration validates the old candidate/reference census and does not reread
+  historical canonical data or prior source archives.
 * W2 and B2 incremental projections are stored as content-addressed per-identity
   groups. Later publication reads and rewrites only groups affected by the new
   rows or ticker ambiguity; unaffected group contents are not copied or read.
@@ -101,9 +107,10 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   trie, validate its candidate/file census, then reconstruct the complete index
   contract including partition and distinct-instrument counts. Old trie nodes
   remain available to in-flight readers; this implementation does not yet
-  garbage-collect superseded nodes.
+  garbage-collect superseded index or reference trie nodes. Each new key writes
+  up to 65 content-addressed trie nodes per tree, so storage grows over time.
 * This is **not yet fully delta-only**: the incremental ticker census,
-  candidate references, and identity-group and override reference maps remain
+  candidate records, and identity-group and override reference maps remain
   together in each generation JSON. Publication still validates
   and scans the compact ticker-group manifest, and copies/serializes accumulated
   incremental structures; targeted lookups also filter the incremental ticker
@@ -166,7 +173,7 @@ This exceeds the former total 20,000-row guard, but is **not** an M2-scale test
 or a resource claim for approximately 5.7 million rows. No qualified M2 data was
 accessed or modified, and no historical archive was ingested.
 
-Linux disposable-fixture suite: **1067 tests run, 14 skipped**; existing
+Linux disposable-fixture suite: **1072 tests run, 14 skipped**; existing
 unrelated ResourceWarnings remain. Windows validation remains pending.
 
 The scoped-reader tests exercise calendar gap/holiday preservation, UDiFF date
@@ -231,3 +238,9 @@ immutable old roots, corruption detection, selected reader and publisher
 integration, and transactional format-7 migration with and without pending
 inputs. Reader snapshot construction still traverses the entire incremental
 index trie; tests are disposable fixtures, not an M2-scale resource claim.
+
+`tests/test_b5_reference_trees.py` covers selected-generation reference roots,
+no full old-tree traversal during ordinary publication, corruption failures, and
+format-8 migration with rollback/retry, pending inputs, and pinned readers.
+Readers still fully traverse both reference tries when selecting a generation;
+this is not a claim of bounded reader startup or a completed B5 lifecycle.

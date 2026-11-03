@@ -1,6 +1,7 @@
-"""Immutable SHA-256 trie for generation-pinned incremental file metadata.
+"""Immutable SHA-256 trie for generation-pinned metadata and references.
 
-Only the changed key path is rewritten. The root and every child are
+Only the changed key path is rewritten; file metadata and blob references
+share the content-addressed node representation. The root and every child are
 content-addressed; omitted, miskeyed or damaged nodes fail closed when read.
 """
 import hashlib
@@ -129,3 +130,83 @@ def from_overlay(db, delta, candidates):
     return {'root': root, 'file_count': len(delta['files']),
             'row_count': sum(value['row_count'] for value in delta['files'].values()),
             'flag_census': dict(delta['flag_census'])}
+
+
+class ReferenceTree:
+    """Mutable transaction-local view of immutable, digest-valued references."""
+    def __init__(self, db, header):
+        validate_reference_header(header)
+        self.db = db
+        self.header = header
+        self._cache = {}
+
+    def __getitem__(self, key):
+        if key not in self._cache:
+            value = lookup(self.db, self.header['root'], key)
+            if value is None:
+                raise KeyError(key)
+            if set(value) != {'digest'} or not _digest(value['digest']):
+                raise ValueError('invalid reference tree value')
+            self._cache[key] = value['digest']
+        return self._cache[key]
+
+    def __contains__(self, key):
+        try:
+            self[key]
+            return True
+        except KeyError:
+            return False
+
+    def __setitem__(self, key, digest):
+        if not _digest(digest):
+            raise ValueError('invalid reference tree digest')
+        self.header['root'] = insert(self.db, self.header['root'], key, {'digest': digest})
+        self.header['count'] += 1
+        self._cache[key] = digest
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+
+def validate_reference_header(header):
+    if (not isinstance(header, dict) or set(header) != {'root', 'count'} or
+            type(header['count']) is not int or header['count'] < 0 or
+            (header['root'] is not None and not _digest(header['root'])) or
+            (header['root'] is None) != (header['count'] == 0)):
+        raise ValueError('invalid reference tree header')
+
+
+def validate_reference_trees(trees, candidates):
+    if not isinstance(trees, dict) or set(trees) != {'delta', 'evidence'} or not isinstance(candidates, list):
+        raise ValueError('invalid reference tree census')
+    for header in trees.values():
+        validate_reference_header(header)
+        if header['count'] != len(candidates):
+            raise ValueError('reference tree candidate count mismatch')
+
+
+def reference_dict(db, header):
+    validate_reference_header(header)
+    found = entries(db, header['root'])
+    if len(found) != header['count']:
+        raise ValueError('reference tree count mismatch')
+    result = {}
+    for key, value in found.items():
+        if set(value) != {'digest'} or not _digest(value['digest']):
+            raise ValueError('invalid reference tree value')
+        result[key] = value['digest']
+    return result
+
+
+def reference_trees_from_payload(db, payload):
+    from .composite_blobs import validate_references
+    validate_references(payload)
+    trees = {name: {'root': None, 'count': 0} for name in ('delta', 'evidence')}
+    for name in ('delta', 'evidence'):
+        view = ReferenceTree(db, trees[name])
+        for key, digest in sorted(payload[name].items()):
+            view[key] = digest
+    return trees

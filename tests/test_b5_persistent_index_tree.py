@@ -74,9 +74,10 @@ class PersistentIndexPublicationTests(unittest.TestCase):
         self.source.unlink(); self.next_delta()
         import serving.persistent_index_map as trie
         with mock.patch.object(trie, '_read', wraps=trie._read) as reads, \
+             mock.patch.object(trie, 'entries', side_effect=AssertionError('prior tree fully scanned')), \
              mock.patch('serving.catalog_publication.materialize_index_tree', side_effect=AssertionError('prior tree fully scanned')):
             second = publish(*self.args)
-        self.assertLessEqual(reads.call_count, 64)
+        self.assertLessEqual(reads.call_count, 3 * 64)
         current = active_snapshot(self.baseline, self.args[1], self.args[2])
         self.assertNotEqual(current[0].payload['index_tree']['root'], root)
         self.assertEqual(current[0].payload['index_tree']['file_count'], 2)
@@ -105,6 +106,7 @@ class PersistentIndexPublicationTests(unittest.TestCase):
         payload = dict(selected[0].payload)
         for key in ('delta', 'evidence', 'w2_delta', 'b2_delta', 'w2_overrides', 'b3_overrides'):
             payload[key] = dict(payload[key].references)
+        payload.pop('reference_trees')
         payload.pop('index_tree'); payload.pop('index'); payload.pop('symbol_catalog')
         payload['format'] = 'catalog-composite/7.0'
         text = _json(payload); old_id = _sha(text)
@@ -136,6 +138,7 @@ class PersistentIndexPublicationTests(unittest.TestCase):
         payload = dict(selected[0].payload)
         for key in ('delta', 'evidence', 'w2_delta', 'b2_delta', 'w2_overrides', 'b3_overrides'):
             payload[key] = dict(payload[key].references)
+        payload.pop('reference_trees')
         payload.pop('index_tree'); payload.pop('index'); payload.pop('symbol_catalog')
         payload['format'] = 'catalog-composite/7.0'
         text = _json(payload); old_id = _sha(text)
