@@ -194,7 +194,7 @@ _symbol_catalog_cache = {}
 _symbol_catalog_lock = Lock()
 
 def _symbol_catalog(baseline, index):
-    if hasattr(baseline, 'payload') and baseline.payload.get('format') in ('catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0'):
+    if hasattr(baseline, 'payload') and baseline.payload.get('format') in ('catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0'):
         return baseline.payload['symbol_catalog']
     key = (baseline.root, baseline.manifest_digest, tuple(sorted(index.get("files", {}))))
     with _symbol_catalog_lock:
@@ -571,7 +571,7 @@ def parse_associations(baseline: Baseline) -> Optional[list]:
     Read-only: the file is streamed and nothing is written.
     """
     if hasattr(baseline, 'payload'):
-        if baseline.payload.get('format') in ('catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0'):
+        if baseline.payload.get('format') in ('catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0'):
             return _catalog_associations(baseline)
         return list(enumerate(baseline.payload['w2'], start=1))
     path = baseline.path(ASSOCIATIONS_FILE)

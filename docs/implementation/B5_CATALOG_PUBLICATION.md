@@ -54,7 +54,7 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
 
 ## Scope limits — no B5 completion claim
 
-* Catalog-backed generation format 11 stores incremental canonical rows and
+* Catalog-backed generation format 12 stores incremental canonical rows and
   evidence once as content-addressed SQLite blobs. Later publications refer to
   existing blobs without reading or copying their contents. Readers verify each
   accessed blob against its generation-pinned digest; old blobs remain available
@@ -78,8 +78,10 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   row/evidence reference maps migrate once to their own immutable trie roots.
   Format-9 identity-group and override reference maps migrate to four further
   trie roots. Format-10 incremental ticker censuses migrate to ticker/series,
-  identity/series, and ticker-directory trees. Migration validates the old
-  censuses and does not reread historical canonical data or prior source archives.
+  identity/series, and ticker-directory trees. Format-11 candidate lists migrate
+  to an ordinal-keyed immutable tree after cross-checking accepted records,
+  retained row/evidence references and incremental index metadata. Migration
+  does not reread historical canonical data or prior source archives.
 * W2 and B2 incremental projections are stored as content-addressed per-identity
   groups. Later publication reads and rewrites only groups affected by the new
   rows or ticker ambiguity; unaffected group contents are not copied or read.
@@ -115,14 +117,17 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   trie, validate its candidate/file census, then reconstruct the complete index
   contract including partition and distinct-instrument counts. Old trie nodes
   remain available to in-flight readers; this implementation does not yet
-  garbage-collect superseded index or reference trie nodes. Each changed key
+  garbage-collect superseded trie nodes. Each changed key
   writes up to 65 content-addressed trie nodes per tree, so storage grows over
   time.
-* This is **not yet fully delta-only**: accumulated candidate records remain
-  together in each generation JSON. Publication still validates and scans the
-  compact baseline ticker-group manifest, and copies/serializes candidate data.
-  Affected ticker/identity groups can grow without bound and are rewritten as
-  whole groups. Readers still compose and scan the complete index metadata, though
+* Candidate records are now stored in a generation-pinned ordinal tree, not
+  copied into each generation JSON. Publication appends new records by changing
+  only their paths; selected readers traverse and validate the full candidate
+  tree and retain the existing ordered-list reader contract.
+* This is **not yet fully delta-only**: publication still validates and scans the
+  compact baseline ticker-group manifest and consults accumulated staged and
+  accepted registry metadata. Affected ticker/identity groups can grow without
+  bound and are rewritten as whole groups. Readers still compose and scan the complete index metadata, though
   neither path rereads historical canonical rows for this work. Very large or numerous deltas can still hit memory or SQLite
   single-value limits. No scalable long-running lifecycle is established.
 * The original qualified historical canonical baseline is not reread during
@@ -181,7 +186,7 @@ This exceeds the former total 20,000-row guard, but is **not** an M2-scale test
 or a resource claim for approximately 5.7 million rows. No qualified M2 data was
 accessed or modified, and no historical archive was ingested.
 
-Linux disposable-fixture suite: **1084 tests run, 14 skipped**; existing
+Linux disposable-fixture suite: **1091 tests run, 14 skipped**; existing
 unrelated ResourceWarnings remain. Windows validation remains pending.
 
 The scoped-reader tests exercise calendar gap/holiday preservation, UDiFF date
@@ -265,3 +270,9 @@ cross-projection verification, and transactional format-10 migration with
 rollback/retry and pinned readers. Readers still traverse the separate index,
 row/evidence and derived-reference trees during selection; the ticker trees
 are fully traversed only on explicit full inspection or registry binding.
+
+`tests/test_b5_candidate_tree.py` covers ordered append-only candidate paths,
+pinned roots, ordinary publication with full old-tree traversal blocked,
+selected corruption, accepted/index mismatch, and format-11 migration with
+rollback/retry. Selected readers still materialize all candidates and multiple
+reference trees; no bounded-startup or completed-lifecycle claim is made.

@@ -69,7 +69,7 @@ class TickerTreePublicationTests(unittest.TestCase):
         selected = active_snapshot(self.baseline, self.args[1], self.args[2])
         payload = dict(selected[0].payload)
         payload['symbol_delta'] = {'observations': payload['symbol_delta']['observations']}
-        for name in ('delta', 'evidence', 'w2_delta', 'b2_delta', 'w2_overrides', 'b3_overrides', 'ticker_trees', 'symbol_catalog', 'index_delta', 'index'):
+        for name in ('delta', 'evidence', 'w2_delta', 'b2_delta', 'w2_overrides', 'b3_overrides', 'ticker_trees', 'candidate_tree', 'symbol_catalog', 'index_delta', 'index'):
             payload.pop(name)
         payload['format'] = 'catalog-composite/10.0'
         text = _json(payload); old = _sha(text)

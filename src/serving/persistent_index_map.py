@@ -102,12 +102,20 @@ def entries(db, root):
     return result
 
 
+def _candidate_count(candidates):
+    if isinstance(candidates, list):
+        return len(candidates)
+    if type(candidates) is int and candidates >= 0:
+        return candidates
+    raise ValueError('invalid candidate census')
+
+
 def validate_header(index_tree, candidates):
     if not isinstance(index_tree, dict) or set(index_tree) != {'root', 'file_count', 'row_count', 'flag_census'}:
         raise ValueError('invalid incremental index tree header')
     root, files, rows, flags = (index_tree[k] for k in ('root', 'file_count', 'row_count', 'flag_census'))
     if ((root is not None and not _digest(root)) or type(files) is not int or files < 0 or type(rows) is not int or rows < 0 or
-            not isinstance(candidates, list) or files != len(candidates) or (root is None) != (files == 0) or
+            files != _candidate_count(candidates) or (root is None) != (files == 0) or
             not isinstance(flags, dict) or any(not isinstance(k, str) or not k or type(v) is not int or v <= 0 for k, v in flags.items())):
         raise ValueError('invalid incremental index tree census')
 
@@ -184,11 +192,11 @@ def validate_reference_header(header):
 
 
 def validate_reference_trees(trees, candidates):
-    if not isinstance(trees, dict) or set(trees) != {'delta', 'evidence'} or not isinstance(candidates, list):
+    if not isinstance(trees, dict) or set(trees) != {'delta', 'evidence'}:
         raise ValueError('invalid reference tree census')
     for header in trees.values():
         validate_reference_header(header)
-        if header['count'] != len(candidates):
+        if header['count'] != _candidate_count(candidates):
             raise ValueError('reference tree candidate count mismatch')
 
 

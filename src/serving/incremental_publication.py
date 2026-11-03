@@ -226,27 +226,33 @@ def active_snapshot(baseline, registry_root, state):
             raise RegistryError('active composite digest mismatch')
         payload = json.loads(text)
         base_index, digest = load_index(state, baseline)
-        if payload.get('format') not in ('bounded-composite/1.0', 'catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0') or payload.get('baseline_manifest_sha256') != baseline.manifest_digest or payload.get('baseline_index_sha256') != digest:
+        if payload.get('format') not in ('bounded-composite/1.0', 'catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0') or payload.get('baseline_manifest_sha256') != baseline.manifest_digest or payload.get('baseline_index_sha256') != digest:
             raise RegistryError('active composite baseline/index mismatch')
-        if payload['format'] in ('catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0'):
+        if payload['format'] == 'catalog-composite/12.0':
+            from .candidate_tree import materialize as materialize_candidates
+            try:
+                payload['candidates'] = materialize_candidates(db, payload.get('candidate_tree'))
+            except (ValueError, KeyError, TypeError, sqlite3.Error) as exc:
+                raise RegistryError('active composite candidate tree invalid: %s' % exc) from exc
+        if payload['format'] in ('catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0'):
             from .continuity_catalog import _metadata, open_catalog, ticker_catalog
             catalog_db, catalog_meta = open_catalog(baseline, state)
             try:
                 catalog_db.execute('BEGIN')
                 if payload.get('catalog_binding') != catalog_meta or _metadata(catalog_db) != catalog_meta:
                     raise RegistryError('active composite catalog mismatch')
-                catalog = ticker_catalog(catalog_db, catalog_meta) if payload['format'] not in ('catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0') else None
+                catalog = ticker_catalog(catalog_db, catalog_meta) if payload['format'] not in ('catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0') else None
             finally:
                 catalog_db.close()
-        if payload['format'] in ('catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0'):
+        if payload['format'] in ('catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0'):
             from .catalog_publication import merge_ticker_catalogs, validate_ticker_delta
             try:
-                if payload['format'] == 'catalog-composite/11.0':
+                if payload['format'] in ('catalog-composite/11.0', 'catalog-composite/12.0'):
                     from .ticker_delta_trees import TickerDeltaTrees
                     payload['symbol_delta'] = TickerDeltaTrees(payload.get('ticker_trees'), path=path)
                 else:
                     validate_ticker_delta(payload.get('symbol_delta'))
-                if payload['format'] in ('catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0'):
+                if payload['format'] in ('catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0'):
                     from .ticker_proofs import open_proofs, TargetedCatalog
                     proof_binding = payload.get('ticker_proofs_binding')
                     if not isinstance(proof_binding, dict):
@@ -258,38 +264,38 @@ def active_snapshot(baseline, registry_root, state):
                     payload['symbol_catalog'] = merge_ticker_catalogs(catalog, payload['symbol_delta'])
             except (ValueError, TypeError, KeyError) as exc:
                 raise RegistryError('invalid composite ticker census: %s' % exc) from exc
-        if payload['format'] in ('catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0'):
+        if payload['format'] in ('catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0'):
             from .composite_blobs import BlobMap, GroupMap, OverrideMap, validate_references, validate_group_references, validate_override_references
             try:
-                if payload['format'] in ('catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0'):
+                if payload['format'] in ('catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0'):
                     from .persistent_index_map import reference_dict, validate_reference_trees
                     validate_reference_trees(payload.get('reference_trees'), payload.get('candidates'))
                     for name in ('delta', 'evidence'):
                         payload[name] = reference_dict(db, payload['reference_trees'][name])
                 validate_references(payload)
-                if payload['format'] in ('catalog-composite/10.0', 'catalog-composite/11.0'):
+                if payload['format'] in ('catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0'):
                     from .persistent_index_map import DERIVED_NAMES, validate_derived_trees, reference_dict
                     validate_derived_trees(payload.get('derived_trees'))
                     for name in DERIVED_NAMES:
                         payload[name] = reference_dict(db, payload['derived_trees'][name])
-                if payload['format'] in ('catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0'):
+                if payload['format'] in ('catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0'):
                     validate_group_references(payload)
-                if payload['format'] in ('catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0'):
+                if payload['format'] in ('catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0'):
                     validate_override_references(payload)
             except (ValueError, sqlite3.Error) as exc:
                 raise RegistryError('active composite blob references invalid: %s' % exc) from exc
             payload['delta'] = BlobMap(path, payload['delta'])
             payload['evidence'] = BlobMap(path, payload['evidence'])
-            if payload['format'] in ('catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0'):
+            if payload['format'] in ('catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0'):
                 payload['w2_delta'] = GroupMap(path, payload['w2_delta'], 'w2', payload['delta'])
                 payload['b2_delta'] = GroupMap(path, payload['b2_delta'], 'b2', payload['delta'])
-            if payload['format'] in ('catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0'):
+            if payload['format'] in ('catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0'):
                 payload['w2_overrides'] = OverrideMap(path, payload['w2_overrides'], 'w2')
                 payload['b3_overrides'] = OverrideMap(path, payload['b3_overrides'], 'b3')
-        if payload['format'] in ('catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0'):
+        if payload['format'] in ('catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0'):
             from .composite_index import compose
             try:
-                if payload['format'] in ('catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0'):
+                if payload['format'] in ('catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0'):
                     from .persistent_index_map import materialize
                     payload['index_delta'] = materialize(db, payload.get('index_tree'), payload.get('candidates'))
                 payload['index'] = compose(base_index, payload.get('index_delta'), payload.get('candidates'))

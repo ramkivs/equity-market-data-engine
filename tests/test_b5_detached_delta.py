@@ -32,6 +32,7 @@ class DetachedDeltaTests(unittest.TestCase):
         payload['b2_delta'] = dict(payload['b2_delta'])
         payload['w2_overrides'] = dict(payload['w2_overrides'])
         payload['b3_overrides'] = dict(payload['b3_overrides'])
+        payload.pop('candidate_tree')
         payload.pop('ticker_trees')
         payload['symbol_delta'] = {'observations': payload['symbol_delta']['observations']}
         payload.pop('derived_trees')
@@ -108,7 +109,7 @@ class DetachedDeltaTests(unittest.TestCase):
             text = db.execute('SELECT g.payload FROM composite_active a JOIN composite_generations g ON g.id=a.generation').fetchone()[0]
             payload = json.loads(text)
             from serving.persistent_index_map import ReferenceTree
-            source = 'incremental/' + payload['candidates'][0]['digest'] + '.rows.jsonl'
+            source = 'incremental/' + active_snapshot(self.baseline, self.args[1], self.args[2])[0].payload['candidates'][0]['digest'] + '.rows.jsonl'
             header = {'root': None, 'count': 0}
             ReferenceTree(db, header)[source] = '0' * 64
             payload['reference_trees']['delta'] = header
