@@ -1,5 +1,6 @@
 """Bounded application access to the optional B3 continuity derivation."""
 from threading import Lock
+import sqlite3
 
 from .w2_continuity import FORMAT, build_continuity, canonical_rows
 
@@ -12,6 +13,9 @@ _lock = Lock()
 
 def get_continuity(baseline, index):
     if hasattr(baseline, 'payload'):
+        if baseline.payload.get('format') == 'catalog-composite/1.0':
+            return {'format': FORMAT, 'baseline_manifest_sha256': baseline.original.manifest_digest,
+                    'availability': 'available', 'reason': None}, _CatalogGroups(baseline)
         document = baseline.payload['b3']
         groups = {}
         for group in document['identities']:
@@ -39,6 +43,35 @@ def get_continuity(baseline, index):
             _cache.clear()
             _cache[key] = groups
         return dict(info, availability='available', reason=None), _cache[key]
+
+
+class _CatalogGroups:
+    """Lazily load unaffected baseline identities from the pinned catalog."""
+    def __init__(self, baseline):
+        self.baseline = baseline
+
+    def get(self, identity, default=None):
+        overrides = self.baseline.payload['b3_overrides']
+        if identity in overrides:
+            return overrides[identity]
+        from .continuity_catalog import _metadata, open_catalog, observations_for_identity
+        db = None
+        try:
+            db, meta = open_catalog(self.baseline.original, self.baseline.state)
+            db.execute('BEGIN')
+            if meta != self.baseline.payload['catalog_binding'] or _metadata(db) != meta:
+                raise ValueError('continuity catalog changed since publication')
+            rows = list(observations_for_identity(db, identity, 'b2'))
+            rows.extend((source, row) for source, row in self.baseline.payload['b2_delta'].get(identity, []))
+            document = build_continuity(rows, self.baseline.original.manifest_digest,
+                                        catalog_override=self.baseline.payload['symbol_catalog'])
+            return document['identities'] or default
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            from .query import QueryError
+            raise QueryError('composite-unavailable', 'continuity catalog read failed: %s' % exc) from exc
+        finally:
+            if db is not None:
+                db.close()
 
 
 def group_summary(document, security_id, series=None):

@@ -1,7 +1,8 @@
-"""Bounded opt-in composite publication for Q1–Q5; not an M2-scale solution.
+"""Composite publication, with a bounded legacy path and catalog-backed path.
 
-A SQLite transaction atomically commits accepted entries, the complete immutable
-snapshot and its active pointer. No source archives or baseline files are written.
+A SQLite transaction commits accepted entries, an immutable generation and its
+active pointer. No source archives or baseline files are written. The catalog
+path avoids baseline row scans but still has accumulated-delta JSON limits.
 """
 import copy
 import hashlib
@@ -49,9 +50,13 @@ def _w2(sources):
 def publish(baseline, registry_root, state, saved, history, source_roots):
     """Publish all staged records, or no changes on any error.
 
-    This bounded implementation refuses larger baselines: it MUST NOT attempt
-    a multi-million-row B3 materialization on an unverified laptop budget.
+    A verified catalog selects the catalog-backed path. Without it, the legacy
+    bounded implementation still refuses large baseline materialization.
     """
+    from .continuity_catalog import FILENAME as CATALOG_FILENAME
+    if os.path.lexists(os.path.join(state, CATALOG_FILENAME)):
+        from .catalog_publication import publish as publish_from_catalog
+        return publish_from_catalog(baseline, registry_root, state, saved, history, source_roots)
     from .query import parse_associations
     if incremental_staging.runtime_bindings() != bindings(baseline) or baseline.run_record.get('config', {}).get('config_fingerprint') != DEFAULT_CONFIG.fingerprint():
         raise RegistryError('current engine, runner or config differs from baseline')
@@ -183,11 +188,12 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
 
 
 class CompositeBaseline:
-    def __init__(self, baseline, generation, payload):
+    def __init__(self, baseline, generation, payload, state=None):
         self.original = baseline
         self.root = baseline.root
         self.manifest_digest = generation
         self.payload = payload
+        self.state = state
     def path(self, relative):
         return self.original.path(relative)
     def open_text(self, relative):
@@ -217,8 +223,18 @@ def active_snapshot(baseline, registry_root, state):
             raise RegistryError('active composite digest mismatch')
         payload = json.loads(text)
         _, digest = load_index(state, baseline)
-        if payload.get('format') != 'bounded-composite/1.0' or payload.get('baseline_manifest_sha256') != baseline.manifest_digest or payload.get('baseline_index_sha256') != digest:
+        if payload.get('format') not in ('bounded-composite/1.0', 'catalog-composite/1.0') or payload.get('baseline_manifest_sha256') != baseline.manifest_digest or payload.get('baseline_index_sha256') != digest:
             raise RegistryError('active composite baseline/index mismatch')
-        return CompositeBaseline(baseline, generation, payload), payload['index']
+        if payload['format'] == 'catalog-composite/1.0':
+            from .continuity_catalog import _metadata, open_catalog, ticker_catalog
+            catalog_db, catalog_meta = open_catalog(baseline, state)
+            try:
+                catalog_db.execute('BEGIN')
+                if payload.get('catalog_binding') != catalog_meta or _metadata(catalog_db) != catalog_meta:
+                    raise RegistryError('active composite catalog mismatch')
+                ticker_catalog(catalog_db, catalog_meta)
+            finally:
+                catalog_db.close()
+        return CompositeBaseline(baseline, generation, payload, state), payload['index']
     finally:
         db.close()

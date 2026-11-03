@@ -194,6 +194,8 @@ _symbol_catalog_cache = {}
 _symbol_catalog_lock = Lock()
 
 def _symbol_catalog(baseline, index):
+    if hasattr(baseline, 'payload') and baseline.payload.get('format') == 'catalog-composite/1.0':
+        return baseline.payload['symbol_catalog']
     key = (baseline.root, baseline.manifest_digest, tuple(sorted(index.get("files", {}))))
     with _symbol_catalog_lock:
         if key not in _symbol_catalog_cache:
@@ -569,6 +571,8 @@ def parse_associations(baseline: Baseline) -> Optional[list]:
     Read-only: the file is streamed and nothing is written.
     """
     if hasattr(baseline, 'payload'):
+        if baseline.payload.get('format') == 'catalog-composite/1.0':
+            return _catalog_associations(baseline)
         return list(enumerate(baseline.payload['w2'], start=1))
     path = baseline.path(ASSOCIATIONS_FILE)
     if not os.path.exists(path):
@@ -593,6 +597,41 @@ def parse_associations(baseline: Baseline) -> Optional[list]:
             seen.add(security_id)
             documents.append((line_number, doc))
     return documents
+
+
+def _catalog_associations(baseline):
+    """Stream original W2 documents with the pinned affected-ID overrides."""
+    overrides = baseline.payload['w2_overrides']
+    path = baseline.original.path(ASSOCIATIONS_FILE)
+    def documents():
+        seen = set()
+        last_line = 0
+        with open(path, encoding='utf8') as handle:
+            for line_number, text in enumerate(handle, 1):
+                if not text.strip():
+                    continue
+                try:
+                    doc = json.loads(text)
+                except ValueError as exc:
+                    raise QueryError('associations-scan', 'unparseable original association') from exc
+                identity = _validate_identity_document(doc, '%s line %d' % (ASSOCIATIONS_FILE, line_number))
+                if identity in seen:
+                    raise QueryError('associations-scan', 'duplicate original identity')
+                seen.add(identity)
+                last_line = line_number
+                selected = overrides.get(identity, doc)
+                if selected is not None:
+                    if _validate_identity_document(selected, 'catalog generation override') != identity:
+                        raise QueryError('associations-scan', 'override identity mismatch')
+                    yield line_number, selected
+        for identity in sorted(set(overrides) - seen):
+            selected = overrides[identity]
+            if selected is not None:
+                if _validate_identity_document(selected, 'catalog generation override') != identity:
+                    raise QueryError('associations-scan', 'override identity mismatch')
+                last_line += 1
+                yield last_line, selected
+    return documents()
 
 
 _UNPARSE = object()  # sentinel: documents not supplied by the caller

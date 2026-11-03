@@ -1,5 +1,7 @@
 # B5 bounded composite publication and application integration
 
+> **Later increment:** The catalog-backed publication path is now available for newly published generations. See `B5_CATALOG_PUBLICATION.md` for current scope and remaining limitations. Earlier statements below describe the state when this record was written.
+
 Continues from `9c6990c` under the owner's recorded authorization. **B5 remains
 open.** This is an actual application integration for bounded synthetic-sized
 datasets, not completion of the qualified M2 workflow. The continuation after

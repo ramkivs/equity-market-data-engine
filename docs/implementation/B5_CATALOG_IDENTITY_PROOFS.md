@@ -1,5 +1,7 @@
 # B5 OW-10: targeted continuity-catalog integrity
 
+> **Later increment:** The catalog-backed publication path is now available for newly published generations. See `B5_CATALOG_PUBLICATION.md` for current scope and remaining limitations. Earlier statements below describe the state when this record was written.
+
 **B5 remains open. Delta-only publication is not implemented by this
 increment.** This is a prerequisite for the approved publication increment:
 the format-1 catalog required a full observation-catalog verification before

@@ -1,5 +1,7 @@
 # B5 OW-10: catalog bootstrap and startup integrity increment
 
+> **Later increment:** The catalog-backed publication path is now available for newly published generations. See `B5_CATALOG_PUBLICATION.md` for current scope and remaining limitations. Earlier statements below describe the state when this record was written.
+
 **B5 remains open.** This increment follows `224b862` and implements the first
 of the approved stages. It does not implement delta-only publication: the
 existing bounded composite publisher still rereads baseline rows, still has its

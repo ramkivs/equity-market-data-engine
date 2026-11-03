@@ -22,7 +22,7 @@ class ContinuityError(ValueError):
     """Malformed or duplicate evidence; no partial result is returned."""
 
 
-def build_continuity(rows, manifest_sha256):
+def build_continuity(rows, manifest_sha256, catalog_override=None):
     """Derive deterministic associations from (canonical source path, row) pairs.
 
     Identity is the B2 valid-ISIN/date correlation, not exchange-authoritative
@@ -70,7 +70,7 @@ def build_continuity(rows, manifest_sha256):
         bounds[0], bounds[1] = min(bounds[0], date), max(bounds[1], date)
 
     # Same observed-bounds and reuse logic as serving B2.
-    symbol_catalog = {'observations': tuple((k[0], k[1], k[2], k[3], v[0], v[1]) for k, v in catalog.items())}
+    symbol_catalog = catalog_override if catalog_override is not None else {'observations': tuple((k[0], k[1], k[2], k[3], v[0], v[1]) for k, v in catalog.items())}
     identities = []
     for (identity, series), evidence in sorted(groups.items()):
         evidence.sort(key=lambda e: (e['business_date'], e['source_file'], e['source_line_number']))
