@@ -1,0 +1,102 @@
+{
+  "bundle": "D26_serving_evidence",
+  "prepared_date": "2026-10-10",
+  "evidence_kind": "conversation-consolidated; not a complete raw transcript",
+  "repository": "ramkivs/nse-historical-data-engine",
+  "implementation_commit": "69977017ffca944921f231d7904347bc582b6392",
+  "package": {
+    "run_id": "i4-20261008-M2",
+    "windows_path": "G:\\My Engines\\I4_RUNS\\i4-20261008-M2",
+    "manifest_sha256": "e7c7e4c8271f3a1c8ef42d76b926fe048a8997a342c92d89819eecd79e73b9dc",
+    "total_bytes": 21119807344,
+    "post_run_manifest_entries": 4946
+  },
+  "steps": [
+    {
+      "step": 1,
+      "operation": "readiness/pinned identity",
+      "result": "PASS_REPORTED",
+      "exit_code": null,
+      "evidence_type": "conversation summary; raw transcript not included"
+    },
+    {
+      "step": 2,
+      "operation": "full M2 verification",
+      "result": "PASS_REPORTED",
+      "exit_code": 0,
+      "evidence_type": "conversation summary; raw transcript not included"
+    },
+    {
+      "step": 3,
+      "operation": "real-M2 integration suite",
+      "result": "PASS",
+      "exit_code": 0,
+      "tests_run": 7,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "duration_seconds": 1792.186,
+      "evidence_type": "user-pasted test summary"
+    },
+    {
+      "step": 4,
+      "operation": "serving index build",
+      "result": "PASS",
+      "exit_code": 0,
+      "instrument_pairs": 16107,
+      "row_count": 5689949,
+      "row_files": 2462,
+      "index_sha256": "08cad8ce80f6b531700a0adc48af83e434f896df287c219f278daf0acbb19996",
+      "evidence_type": "user-pasted JSON"
+    },
+    {
+      "step": 5,
+      "operation": "Q3 query RELIANCE EQ",
+      "result": "PASS",
+      "exit_code": 0,
+      "raw_transcript_complete": false,
+      "evidence_type": "user-reported result and partial user-uploaded query output fragments",
+      "performance_note": "multi-minute runtime observed; root cause unknown"
+    },
+    {
+      "step": 6,
+      "operation": "rebuild reproducibility",
+      "result": "PASS",
+      "exit_code": 0,
+      "identical": true,
+      "before_sha256": "08cad8ce80f6b531700a0adc48af83e434f896df287c219f278daf0acbb19996",
+      "after_sha256": "08cad8ce80f6b531700a0adc48af83e434f896df287c219f278daf0acbb19996",
+      "files_scanned": 2462,
+      "rows_scanned": 5689949,
+      "instrument_pairs": 16107,
+      "evidence_type": "user-pasted JSON"
+    },
+    {
+      "step": 7,
+      "operation": "post-run M2 verification",
+      "result": "PASS",
+      "exit_code": 0,
+      "checks_passed": [
+        "verify-01",
+        "verify-02",
+        "verify-03",
+        "verify-04",
+        "verify-05",
+        "verify-06",
+        "verify-07"
+      ],
+      "manifest_entries": 4946,
+      "manifest_sha256": "e7c7e4c8271f3a1c8ef42d76b926fe048a8997a342c92d89819eecd79e73b9dc",
+      "total_bytes": 21119807344,
+      "evidence_type": "user-pasted JSON"
+    }
+  ],
+  "final_handoff_message": "HANDOFF RESULT: COMMANDS COMPLETED. Review all expected results before declaring D26 integration verification successful.",
+  "limitations": [
+    "Not a complete raw PowerShell transcript.",
+    "Step 1 and Step 2 standalone transcripts not included.",
+    "Step 5 query output fragments are partial.",
+    "No independent Arena observation of the Windows execution is claimed.",
+    "No D23 acceptance closure, Git publication, or D24 promotion is asserted."
+  ]
+}
