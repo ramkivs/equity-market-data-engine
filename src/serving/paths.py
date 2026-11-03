@@ -43,3 +43,47 @@ def validate_roots(**roots):
 
 def repository_root(root=None):
     return resolved(root if root is not None else os.path.join(os.path.dirname(__file__), '..', '..'))
+
+
+class RootConfiguration:
+    """A four-root layout, with substitution detection for existing directories.
+
+    Paths are anchored when configured. Each validation detects retargeted aliases
+    and replacement of directories or existing ancestors. This is a fail-closed
+    check, not a filesystem transaction or protection from a concurrent attacker.
+    """
+
+    def __init__(self, package, state, saved, history):
+        self._inputs = {name: os.path.abspath(os.fspath(path)) for name, path in
+                        (("package", package), ("state", state),
+                         ("saved", saved), ("history", history))}
+        self.roots = {name: resolved(path) for name, path in self._inputs.items()}
+        validate_roots(**self.roots)
+        self._identities = {}
+        self._remember_existing()
+
+    def _remember_existing(self):
+        for root in self.roots.values():
+            path = root
+            while True:
+                if os.path.isdir(path):
+                    info = os.stat(path)
+                    identity = (info.st_dev, info.st_ino)
+                    old = self._identities.get(path)
+                    if old is not None and old != identity:
+                        raise RootLayoutError("root-layout: directory replaced: %s" % path)
+                    self._identities[path] = identity
+                elif path in self._identities:
+                    raise RootLayoutError("root-layout: directory disappeared: %s" % path)
+                parent = os.path.dirname(path)
+                if parent == path:
+                    break
+                path = parent
+
+    def validate(self):
+        for name, original in self._inputs.items():
+            if resolved(original) != self.roots[name]:
+                raise RootLayoutError("root-layout: configured %s path changed: %s" % (name, original))
+        validate_roots(**self.roots)
+        self._remember_existing()
+        return self

@@ -50,7 +50,7 @@ from serving.index import (
     load_index,
     write_index,
 )
-from serving.paths import validate_roots
+from serving.paths import RootConfiguration
 from serving.rebuild import rebuild_state
 
 from .api import UiApi, encode
@@ -185,13 +185,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        roots = RootConfiguration(args.package, args.state, args.saved_state, args.history_state)
         baseline = open_baseline(args.package, spec=DEFAULT_M2_SPEC if args.m2 else None)
     except Exception as exc:  # fail closed before binding anything
         print(json.dumps({"result": "fail", "stage": "baseline", "detail": str(exc)}, sort_keys=True), flush=True)
         return 3
     try:
-        validate_roots(package=baseline.root, state=args.state, saved=args.saved_state, history=args.history_state)
-        _ensure_index(baseline, args.state)
+        roots.validate()
+        _ensure_index(baseline, roots.roots["state"])
+        roots.validate()
     except Exception as exc:
         print(json.dumps({"result": "fail", "stage": "index", "detail": str(exc)}, sort_keys=True), flush=True)
         return 3
@@ -202,6 +204,7 @@ def main(argv=None) -> int:
         args.history_state,
         m2=args.m2,
         repo_root=args.repo,
+        root_config=roots,
     )
     server = ThreadingHTTPServer((args.bind, args.port), _Handler)
     server.daemon_threads = True

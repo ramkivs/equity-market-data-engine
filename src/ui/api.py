@@ -44,6 +44,7 @@ from serving.history import (
 )
 from serving.index import ServingIndexError, canonical_json
 from serving.query import QueryError
+from serving.paths import RootConfiguration, repository_root, resolved, RootLayoutError
 from serving.saved import (
     SAVED_DIGEST_FILENAME,
     SAVED_FILENAME,
@@ -115,9 +116,6 @@ class RouteMethod(Exception):
     """Internal: the path exists but the method is not authorized for it."""
 
 
-from serving.paths import validate_roots, repository_root, resolved, RootLayoutError
-
-
 class UiApi:
     """The presentation layer's single data path over the serving boundary."""
 
@@ -129,8 +127,14 @@ class UiApi:
         history_root: str,
         m2: bool = False,
         repo_root: Optional[str] = None,
+        root_config: Optional[RootConfiguration] = None,
     ) -> None:
-        validate_roots(package=baseline.root, state=state_root, saved=saved_root, history=history_root)
+        supplied = {"package": resolved(baseline.root), "state": resolved(state_root),
+                    "saved": resolved(saved_root), "history": resolved(history_root)}
+        self._root_config = root_config or RootConfiguration(baseline.root, state_root, saved_root, history_root)
+        self._root_config.validate()
+        if self._root_config.roots != supplied:
+            raise RootLayoutError("root-layout: configuration does not match service roots")
         self._baseline = baseline
         self._state_root = resolved(state_root)
         self._saved_root = resolved(saved_root)
@@ -141,11 +145,12 @@ class UiApi:
         self._lock = threading.Lock()
 
     def _validate_layout(self):
-        validate_roots(package=self._baseline.root, state=self._state_root, saved=self._saved_root, history=self._history_root)
+        self._root_config.validate()
 
     # ------------------------------------------------------------------ status
     def status(self) -> dict:
         """Server facts (all from the verified package record / CLI flags)."""
+        self._validate_layout()
         run_record = self._baseline.run_record
         return {
             "result": "pass",
@@ -165,6 +170,7 @@ class UiApi:
         The result envelope is exactly the CLI envelope for the same
         parameters — no new query semantics (D23 §18(8)).
         """
+        self._validate_layout()
         if not isinstance(body, dict):
             raise SavedQueryError("saved-query-invalid", "the request body must be a JSON object {mode, params}")
         mode = body.get("mode")
@@ -188,12 +194,14 @@ class UiApi:
 
     # ------------------------------------------------------------------ saved
     def saved_list(self) -> dict:
+        self._validate_layout()
         if self._saved_fresh():
             return {"result": "pass", "count": 0, "entries": []}
         entries = list_saved(self._saved_root)
         return {"result": "pass", "count": len(entries), "entries": entries}
 
     def saved_show(self, query_id: str) -> dict:
+        self._validate_layout()
         if self._saved_fresh():
             raise SavedQueryError("saved-query-not-found", "no saved query with identifier %r (store is empty)" % query_id)
         return {"result": "pass", "entry": get_saved(self._saved_root, query_id)}
@@ -202,6 +210,7 @@ class UiApi:
         self._validate_layout()
         query_id, mode, params = _saved_def_body(body)
         with self._lock:
+            self._validate_layout()
             record, digest = create_saved(self._saved_root, query_id, mode, params)
         return {"result": "pass", "entry": record, "store_sha256": digest}
 
@@ -212,6 +221,7 @@ class UiApi:
             raise SavedQueryError("saved-query-not-found", "no saved query with identifier %r (store is empty)" % query_id)
         mode, params = _saved_mode_params(body)
         with self._lock:
+            self._validate_layout()
             record, digest = update_saved(self._saved_root, query_id, mode, params)
         return {"result": "pass", "entry": record, "store_sha256": digest}
 
@@ -221,11 +231,13 @@ class UiApi:
         if self._saved_fresh():
             raise SavedQueryError("saved-query-not-found", "no saved query with identifier %r (store is empty)" % query_id)
         with self._lock:
+            self._validate_layout()
             digest = delete_saved(self._saved_root, query_id)
         return {"result": "pass", "query_id": query_id, "store_sha256": digest}
 
     def saved_run(self, query_id: str) -> dict:
         """Execute a saved definition — read-only on the store (C2(a))."""
+        self._validate_layout()
         _query_id_or_raise(query_id)
         if self._saved_fresh():
             raise SavedQueryError("saved-query-not-found", "no saved query with identifier %r to run (store is empty)" % query_id)
@@ -234,12 +246,14 @@ class UiApi:
 
     # ------------------------------------------------------------------ history
     def history_list(self) -> dict:
+        self._validate_layout()
         if self._history_fresh():
             return {"result": "pass", "count": 0, "entries": []}
         entries = list_history(self._history_root)
         return {"result": "pass", "count": len(entries), "entries": entries}
 
     def history_show(self, seq: str) -> dict:
+        self._validate_layout()
         number = _seq_or_raise(seq)
         if self._history_fresh():
             raise HistoryError("history-not-found", "no history entry with seq %d (store is empty)" % number)
@@ -251,6 +265,7 @@ class UiApi:
         if self._history_fresh():
             raise HistoryError("history-not-found", "no history entry with seq %d (store is empty)" % number)
         with self._lock:
+            self._validate_layout()
             digest = delete_history(self._history_root, number)
         return {"result": "pass", "seq": number, "store_sha256": digest}
 
@@ -268,6 +283,7 @@ class UiApi:
         if not isinstance(params, dict):
             raise HistoryError("history-invalid", "params must be a JSON object (the mode's exact parameter contract)")
         with self._lock:
+            self._validate_layout()
             entry, output, detail, digest = record_execution(
                 self._history_root, mode, params, self._baseline, self._state_root, m2=self._m2, repo_root=self._repo_root
             )

@@ -51,7 +51,7 @@ import json
 import sys
 
 from . import baseline as baseline_mod
-from .paths import validate_roots, RootLayoutError
+from .paths import validate_roots, RootLayoutError, RootConfiguration, resolved
 from .archive import D01InventoryError, load_d01_inventory, query_archive_inventory
 from .detail import query_record_detail
 from .index import index_state, load_index, write_index, build_index, ServingIndexError
@@ -563,6 +563,9 @@ def cmd_info(args) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="serving", description=__doc__.splitlines()[0])
+    for role in ("package", "state", "saved", "history"):
+        parser.add_argument("--root-" + role, default=None,
+                            help="complete four-root layout: " + role + " root (supply all four)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     def add_common(p, state=False):
@@ -861,6 +864,18 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        values = {role: getattr(args, "root_" + role) for role in ("package", "state", "saved", "history")}
+        roots = None
+        if any(value is not None for value in values.values()):
+            if any(value is None for value in values.values()):
+                raise RootLayoutError("root-layout: supply all four --root-* options")
+            roots = RootConfiguration(**values)
+            for role, attribute in (("package", "package"), ("state", "state"),
+                                    ("saved", "saved_state"), ("history", "history_state")):
+                actual = getattr(args, attribute, None)
+                if actual is not None and resolved(actual) != roots.roots[role]:
+                    raise RootLayoutError("root-layout: --%s does not match configured %s root" % (attribute.replace("_", "-"), role))
+            roots.validate()
         return args.func(args)
     except RootLayoutError as exc:
         _print_json({"result": "fail", "check": "root-layout", "detail": str(exc)})
