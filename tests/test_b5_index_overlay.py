@@ -28,7 +28,7 @@ class IndexOverlayTests(unittest.TestCase):
         payload = dict(selected.payload)
         for key in ('delta', 'evidence', 'w2_delta', 'b2_delta', 'w2_overrides', 'b3_overrides'):
             payload[key] = dict(payload[key].references)
-        payload.pop('index_delta'); payload.pop('symbol_catalog')
+        payload.pop('ticker_proofs_binding'); payload.pop('index_delta'); payload.pop('symbol_catalog')
         payload['format'] = 'catalog-composite/5.0'
         text = _json(payload); generation = _sha(text)
         with sqlite3.connect(self.dbpath()) as db:

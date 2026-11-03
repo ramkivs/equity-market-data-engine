@@ -80,7 +80,7 @@ def resolve_symbol(catalog, symbol, series):
     Ranges are observed bounds, not claimed validity. Overlaps are treated
     conservatively as ambiguous, including the boundary day.
     """
-    matches = [o for o in catalog['observations'] if o[0] == symbol and o[1] == series]
+    matches = catalog.ticker_observations(symbol, series) if hasattr(catalog, 'ticker_observations') else [o for o in catalog['observations'] if o[0] == symbol and o[1] == series]
     if not matches:
         return {'kind': 'raw', 'identity': None, 'symbol': symbol, 'series': series}
     identities = {o[2] for o in matches if o[2]}
@@ -88,7 +88,8 @@ def resolve_symbol(catalog, symbol, series):
         raise ValueError('ticker %r series %r has multiple valid ISINs: %s' % (symbol, series, sorted(identities)))
     identity = next(iter(identities)) if identities else None
     if identity:
-        spans = [(o[0], o[4], o[5]) for o in catalog['observations']
+        observations = catalog.identity_observations(identity, series) if hasattr(catalog, 'identity_observations') else catalog['observations']
+        spans = [(o[0], o[4], o[5]) for o in observations
                  if o[2] == identity and o[1] == series and o[4] and o[5]]
         for i, (ticker, start, end) in enumerate(spans):
             for other, other_start, other_end in spans[i+1:]:

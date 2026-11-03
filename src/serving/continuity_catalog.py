@@ -259,6 +259,9 @@ def verify_catalog(baseline, state):
             actual_groups = {(kind, identity): (count, digest) for kind, identity, count, digest in _group_rows(db)}
             if actual_groups != expected_groups:
                 raise CatalogError('catalog identity group observations mismatch')
+        from .ticker_proofs import FILE as PROOF_FILE, verify as verify_ticker_proofs
+        if os.path.lexists(os.path.join(state, PROOF_FILE)):
+            verify_ticker_proofs(state, meta)
         return meta
     except sqlite3.Error as exc:
         raise CatalogError('catalog integrity failure: %s' % exc) from exc

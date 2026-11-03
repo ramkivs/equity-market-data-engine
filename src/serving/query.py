@@ -194,7 +194,7 @@ _symbol_catalog_cache = {}
 _symbol_catalog_lock = Lock()
 
 def _symbol_catalog(baseline, index):
-    if hasattr(baseline, 'payload') and baseline.payload.get('format') in ('catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0'):
+    if hasattr(baseline, 'payload') and baseline.payload.get('format') in ('catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0'):
         return baseline.payload['symbol_catalog']
     key = (baseline.root, baseline.manifest_digest, tuple(sorted(index.get("files", {}))))
     with _symbol_catalog_lock:
@@ -392,7 +392,7 @@ def query_filters(
     if "symbol" in filters:
         catalog = _symbol_catalog(baseline, index)
         series_values = {filters["series"]} if "series" in filters else (
-            {o[1] for o in catalog['observations'] if o[0] == filters['symbol']} |
+            (catalog.ticker_series(filters['symbol']) if hasattr(catalog, 'ticker_series') else {o[1] for o in catalog['observations'] if o[0] == filters['symbol']}) |
             {pair[1] for meta in index.get('files', {}).values() for pair in meta.get('instruments', []) if pair[0] == filters['symbol']})
         symbol_selections = {series: _resolve(catalog, filters['symbol'], series) for series in series_values}
     results = []
@@ -571,7 +571,7 @@ def parse_associations(baseline: Baseline) -> Optional[list]:
     Read-only: the file is streamed and nothing is written.
     """
     if hasattr(baseline, 'payload'):
-        if baseline.payload.get('format') in ('catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0'):
+        if baseline.payload.get('format') in ('catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0'):
             return _catalog_associations(baseline)
         return list(enumerate(baseline.payload['w2'], start=1))
     path = baseline.path(ASSOCIATIONS_FILE)
@@ -691,7 +691,8 @@ def query_associations(
                         continue
                 elif entry["symbol"] != symbol:
                     continue
-                evidence = sorted({o[0] for o in catalog['observations']
+                identity_observations = catalog.identity_observations(doc['security_id'], entry['series']) if hasattr(catalog, 'identity_observations') else catalog['observations']
+                evidence = sorted({o[0] for o in identity_observations
                                    if o[2] == doc['security_id'] and o[1] == entry['series']
                                    and o[3] == entry['symbol'] and o[4] and o[5]
                                    and (entry['observed_from'] <= o[4] <= entry['observed_to'] or entry['observed_from'] <= o[5] <= entry['observed_to'])})

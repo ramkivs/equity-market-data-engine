@@ -20,6 +20,7 @@ from . import incremental_staging
 from .incremental_drafts import _validate
 from .index import load_index
 from .symbols import _identity, observed_trading_symbol
+from .query import QueryError
 from .w2_continuity import build_continuity
 from .composite_index import empty as empty_index_delta, file_metadata, compose as compose_index, extract as extract_index, validate as validate_index_delta
 from .composite_blobs import (put as put_blob, schema as blob_schema, validate_references,
@@ -31,7 +32,8 @@ INLINE_GROUP_FORMAT_ID = 'catalog-composite/2.0'
 INLINE_OVERRIDE_FORMAT_ID = 'catalog-composite/3.0'
 INLINE_TICKER_FORMAT_ID = 'catalog-composite/4.0'
 INLINE_INDEX_FORMAT_ID = 'catalog-composite/5.0'
-FORMAT_ID = 'catalog-composite/6.0'
+NO_TICKER_PROOF_FORMAT_ID = 'catalog-composite/6.0'
+FORMAT_ID = 'catalog-composite/7.0'
 MAX_PENDING_BYTES = 128 * 1024 * 1024
 MAX_PENDING_ROWS = 20000
 
@@ -126,18 +128,29 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
     path = _db_path(baseline, registry_root, state, saved, history, source_roots)
     index, index_hash = load_index(state, baseline)
     cat, meta = open_catalog(baseline, state)
+    proof_db = None
     try:
         cat.execute('BEGIN')
         if _metadata(cat) != meta:
             raise RegistryError('continuity catalog changed before publication')
         if meta['format'] != FORMAT:
             raise RegistryError('continuity catalog needs upgrade before publication')
-        base_catalog = ticker_catalog(cat, meta)
+        from .ticker_proofs import FILE as PROOF_FILE, build as build_ticker_proofs, open_proofs, TargetedCatalog
+        base_catalog = None
         preview, _ = _open(baseline, path)
         try:
             staged = _pending(preview)
+            active_exists = preview.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='composite_active'").fetchone()
+            active_row = preview.execute('SELECT a.generation,g.payload FROM composite_active a LEFT JOIN composite_generations g ON g.id=a.generation WHERE a.singleton=1').fetchone() if active_exists else None
+            if active_row and (active_row[1] is None or _sha(active_row[1]) != active_row[0]):
+                raise RegistryError('active composite pointer is missing or invalid')
+            prior_format = json.loads(active_row[1]).get('format') if active_row else None
         finally:
             preview.close()
+        if prior_format == FORMAT_ID and not os.path.lexists(os.path.join(state, PROOF_FILE)):
+            raise RegistryError('ticker lookup proofs missing; explicit recovery required')
+        proof_meta = build_ticker_proofs(baseline, state, cat, meta)
+        proof_db, _, proof_groups = open_proofs(state, meta, proof_meta)
         for text, _, _ in staged:
             rec = json.loads(text)
             finding = inspect(baseline, registry_root, state, saved, history, source_roots,
@@ -165,29 +178,32 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                 if _sha(previous[1]) != previous[0]:
                     raise RegistryError('active composite digest mismatch')
                 payload = json.loads(previous[1])
-                if payload.get('format') not in (FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_GROUP_FORMAT_ID, LEGACY_FORMAT_ID, 'bounded-composite/1.0'):
+                if payload.get('format') not in (FORMAT_ID, NO_TICKER_PROOF_FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_GROUP_FORMAT_ID, LEGACY_FORMAT_ID, 'bounded-composite/1.0'):
                     raise RegistryError('unknown active composite format')
                 if payload.get('baseline_manifest_sha256') != baseline.manifest_digest or payload.get('baseline_index_sha256') != index_hash:
                     raise RegistryError('active composite baseline/index mismatch')
-                if payload.get('format') in (FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_GROUP_FORMAT_ID, LEGACY_FORMAT_ID) and payload.get('catalog_binding') != meta:
+                if payload.get('format') in (FORMAT_ID, NO_TICKER_PROOF_FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_GROUP_FORMAT_ID, LEGACY_FORMAT_ID) and payload.get('catalog_binding') != meta:
                     raise RegistryError('active composite catalog mismatch')
-                if payload.get('format') in (FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_GROUP_FORMAT_ID):
+                if payload.get('format') in (FORMAT_ID, NO_TICKER_PROOF_FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_GROUP_FORMAT_ID):
                     validate_references(payload)
-                if payload.get('format') in (FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID):
+                if payload.get('format') in (FORMAT_ID, NO_TICKER_PROOF_FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID):
                     validate_group_references(payload)
-                if payload.get('format') in (FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID):
+                if payload.get('format') in (FORMAT_ID, NO_TICKER_PROOF_FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID):
                     validate_override_references(payload)
-                if payload.get('format') in (FORMAT_ID, INLINE_INDEX_FORMAT_ID):
+                if payload.get('format') in (FORMAT_ID, NO_TICKER_PROOF_FORMAT_ID, INLINE_INDEX_FORMAT_ID):
                     validate_ticker_delta(payload.get('symbol_delta'))
-                if payload.get('format') == FORMAT_ID:
+                if payload.get('format') in (FORMAT_ID, NO_TICKER_PROOF_FORMAT_ID):
                     validate_index_delta(payload.get('index_delta'), payload.get('candidates'))
+                if payload.get('format') == FORMAT_ID and payload.get('ticker_proofs_binding') != proof_meta:
+                    raise RegistryError('ticker lookup proof binding mismatch')
             migrating = previous is not None and payload.get('format') == 'bounded-composite/1.0'
             migrate_blobs = previous is not None and payload.get('format') == LEGACY_FORMAT_ID
             migrate_groups = previous is not None and payload.get('format') in (LEGACY_FORMAT_ID, INLINE_GROUP_FORMAT_ID)
             migrate_overrides = previous is not None and payload.get('format') in (LEGACY_FORMAT_ID, INLINE_GROUP_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID)
             migrate_tickers = previous is not None and payload.get('format') in (LEGACY_FORMAT_ID, INLINE_GROUP_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_TICKER_FORMAT_ID)
             migrate_index = previous is not None and payload.get('format') in (LEGACY_FORMAT_ID, INLINE_GROUP_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_INDEX_FORMAT_ID)
-            if not staged and not migrating and not migrate_index:
+            migrate_proofs = previous is not None and payload.get('format') == NO_TICKER_PROOF_FORMAT_ID
+            if not staged and not migrating and not migrate_index and not migrate_proofs:
                 if previous is None:
                     raise RegistryError('no new records or prior generation')
                 db.commit()
@@ -227,6 +243,7 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                         put_blob(db, text, digest)
                         overrides[identity] = digest
             if migrate_tickers:
+                base_catalog = ticker_catalog(cat, meta)  # one-time legacy migration
                 # A one-time migration reads retained delta blobs, never old
                 # source archives or the historical canonical baseline.
                 from .composite_blobs import get as get_blob
@@ -295,7 +312,9 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                     raise RegistryError('inline composite index disagrees with retained incremental rows')
                 payload.pop('index')
                 payload['index_delta'] = rebuilt
+            if migrate_index or migrate_proofs:
                 payload['format'] = FORMAT_ID
+                payload['ticker_proofs_binding'] = proof_meta
             if previous and payload.get('format') == FORMAT_ID:
                 validate_references(payload)
                 validate_group_references(payload)
@@ -309,7 +328,7 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                 if not any(rel == 'w2/associations.jsonl' for _, rel in baseline.manifest_entries):
                     raise RegistryError('baseline W2 associations missing')
                 payload = {'format': FORMAT_ID, 'baseline_manifest_sha256': baseline.manifest_digest,
-                           'baseline_index_sha256': index_hash, 'catalog_binding': meta,
+                           'baseline_index_sha256': index_hash, 'catalog_binding': meta, 'ticker_proofs_binding': proof_meta,
                            'w2_overrides': {}, 'b3_overrides': {}, 'w2_delta': {}, 'b2_delta': {},
                            'delta': {}, 'evidence': {}, 'candidates': []}
                 index_delta = empty_index_delta()
@@ -400,10 +419,11 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                 verify_carried_index()
             delta_catalog = _merge_tickers(old_delta_catalog, all_new)
             validate_ticker_delta(delta_catalog)
-            catalog = merge_ticker_catalogs(base_catalog, delta_catalog)
+            catalog = TargetedCatalog(state, meta, proof_meta, delta_catalog, proof_db, proof_groups)
             # Reuse of a newly observed ticker affects existing valid identities,
             # even when those identities have no rows in this delta.
-            affected_b2.update(o[2] for o in catalog['observations'] if (o[0], o[1]) in added_tickers and o[2])
+            for ticker, series in sorted(added_tickers):
+                affected_b2.update(o[2] for o in catalog.ticker_observations(ticker, series) if o[2])
             def affected_group(kind, identity, additions):
                 groups = payload[kind + '_delta']
                 previous_hash = groups.get(identity)
@@ -448,12 +468,14 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                 db.execute('INSERT INTO accepted VALUES (?,?,?,?)', (rec['file_name'], rec['date'], rec['digest'], _json(entry)))
             db.execute('INSERT INTO composite_active VALUES (1,?) ON CONFLICT(singleton) DO UPDATE SET generation=excluded.generation', (generation,))
             db.commit()
-            return {'status': 'PUBLISHED', 'generation': generation, 'new_inputs': len(new), 'migrated_bounded_generation': previous[0] if migrating else None, 'migrated_inline_generation': previous[0] if migrate_blobs else None, 'migrated_groups_generation': previous[0] if migrate_groups else None, 'migrated_overrides_generation': previous[0] if migrate_overrides else None, 'migrated_tickers_generation': previous[0] if migrate_tickers else None, 'migrated_index_generation': previous[0] if migrate_index else None, 'row_count': index['counts']['row_count'] + sum(f['row_count'] for f in index_delta['files'].values())}
-        except (sqlite3.Error, ValueError, KeyError, TypeError) as exc:
+            return {'status': 'PUBLISHED', 'generation': generation, 'new_inputs': len(new), 'migrated_bounded_generation': previous[0] if migrating else None, 'migrated_inline_generation': previous[0] if migrate_blobs else None, 'migrated_groups_generation': previous[0] if migrate_groups else None, 'migrated_overrides_generation': previous[0] if migrate_overrides else None, 'migrated_tickers_generation': previous[0] if migrate_tickers else None, 'migrated_index_generation': previous[0] if migrate_index else None, 'migrated_ticker_proofs_generation': previous[0] if migrate_proofs else None, 'row_count': index['counts']['row_count'] + sum(f['row_count'] for f in index_delta['files'].values())}
+        except (sqlite3.Error, ValueError, KeyError, TypeError, QueryError) as exc:
             if isinstance(exc, RegistryError):
                 raise
             raise RegistryError('catalog publication failed: %s' % exc) from exc
         finally:
             db.close()
     finally:
+        if proof_db is not None:
+            proof_db.close()
         cat.close()
