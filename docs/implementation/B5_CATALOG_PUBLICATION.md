@@ -63,8 +63,20 @@ required.
   query reads, not historical archive ingestion or publication replay.
 * Existing unbound registry discovery and migration remain incomplete; a
   completely missing binding is still indistinguishable from never-bound state.
-* Q6 calendar, Q8 quality and Q9 archive inventory still fail closed for the
-  selected composite. Q10 remains explicitly baseline-only.
+* Q6 overlays incremental file presence on the qualified calendar without
+  replacing sourced labels or explaining unknown days. If the qualified W2
+  calendar is absent, Q6 explicitly labels a presence-only reconstruction from
+  the input manifest; missing-day holiday labels and baseline UDiFF date-equality
+  evidence remain unknown. Q8 includes selected index flag counts and incremental
+  quarantine, while unresolved and reconciliation evidence is baseline-only;
+  incremental reconciliation is unavailable, and D21 findings are captured with
+  the selected request snapshot. Q9 joins original D01 evidence only to original
+  inputs and reports incremental provenance separately, with no fabricated D01
+  or combined archive-set digest. Q10 remains baseline-only.
+* Q6/Q8/Q9 are wired through selected UI, saved/history and CLI paths. CLI
+  inventory requires `--state` to select the bound generation; omitting it is
+  explicitly baseline-only. D21 findings reflect the request's registry snapshot,
+  which can change without a new published generation.
 * The catalog and selected generation integrity checks detect accidental
   corruption, not an adversary able to rewrite both state and checksums; local
   concurrent hostile path swaps are outside the documented B1 guarantees.
@@ -87,5 +99,11 @@ This exceeds the former total 20,000-row guard, but is **not** an M2-scale test
 or a resource claim for approximately 5.7 million rows. No qualified M2 data was
 accessed or modified, and no historical archive was ingested.
 
-Linux disposable-fixture suite: **1019 tests run, 14 skipped**; existing
+Linux disposable-fixture suite: **1021 tests run, 14 skipped**; existing
 unrelated ResourceWarnings remain. Windows validation remains pending.
+
+The scoped-reader tests exercise calendar gap/holiday preservation, UDiFF date
+observations, D21 request pinning, original versus incremental provenance,
+saved/history execution, and both bounded and catalog-backed selections. The
+holiday preservation check uses synthetic mocked calendar evidence; it is not
+a validation against the qualified M2 package.

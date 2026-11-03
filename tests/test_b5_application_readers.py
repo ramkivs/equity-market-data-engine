@@ -55,8 +55,12 @@ class CompositeReadersTests(unittest.TestCase):
         self.assertEqual(hist['query']['rows'], result['rows'])
         for mode in ('Q6-calendar', 'Q8-data-quality', 'Q9-archive-inventory'):
             response, body = api.dispatch('POST', '/api/query', {'mode':mode, 'params':{}})
-            self.assertNotEqual(response, 200)
-            self.assertEqual(body['check'], 'composite-unavailable')
+            self.assertEqual(response, 200, body)
+            query = body['query']
+            self.assertEqual(query.get('composite_generation', query.get('summary', {}).get('composite_generation')), published['generation'])
+            create_saved(self.args[3], mode.lower(), mode, {})
+            self.assertEqual(execute_saved(self.args[3], mode.lower(), self.baseline, self.args[2]), query)
+            self.assertEqual(api.history_record({'mode':mode, 'params':{}})['query'], query)
 
     def test_normal_server_restart_selects_durable_binding(self):
         published = self.init()
@@ -89,7 +93,7 @@ class CompositeReadersTests(unittest.TestCase):
         finally:
             proc.terminate(); proc.communicate(timeout=10)
 
-    def test_serving_cli_uses_bound_generation_and_quality_fails_closed(self):
+    def test_serving_cli_uses_bound_generation_and_scoped_readers(self):
         self.init()
         env = dict(os.environ, PYTHONPATH=os.path.abspath('src'), PYTHONDONTWRITEBYTECODE='1')
         common = ['--package', str(self.pkg), '--state', self.args[2]]
@@ -97,8 +101,13 @@ class CompositeReadersTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertTrue(any(r['business_date'] == '2016-01-06' for r in json.loads(proc.stdout)['rows']))
         proc = subprocess.run([sys.executable, '-m', 'serving', 'quality', *common], env=env, capture_output=True, text=True, timeout=20)
-        self.assertNotEqual(proc.returncode, 0)
-        self.assertIn('unavailable', json.loads(proc.stdout)['detail'])
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)['reconciliation']['incremental_availability'], 'not-published')
+        for command in (['query', *common, '--calendar', '--from', '2016-01-06', '--to', '2016-01-06'], ['inventory', *common]):
+            proc = subprocess.run([sys.executable, '-m', 'serving', *command], env=env, capture_output=True, text=True, timeout=20)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            result = json.loads(proc.stdout)
+            self.assertTrue(result.get('composite_generation') or result.get('summary', {}).get('composite_generation'))
 
     def test_invalid_or_mismatched_binding_fails_closed(self):
         self.init()

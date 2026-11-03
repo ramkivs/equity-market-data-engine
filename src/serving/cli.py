@@ -213,8 +213,6 @@ def cmd_query(args) -> int:
             document, _digest = load_index(args.state, handle)
         else:
             handle, document = composite
-            if q6:
-                raise QueryError('composite-unavailable', 'calendar unavailable for selected composite generation')
         if q2:
             rows = query_date_range(handle, document, args.date_from, args.date_to)
             output = {
@@ -224,6 +222,9 @@ def cmd_query(args) -> int:
                 "result_count": len(rows),
                 "rows": list(rows),
             }
+        elif q6 and composite is not None:
+            from .composite_readers import calendar
+            output = calendar(handle, {'date_from': args.date_from, 'date_to': args.date_to})
         elif q6:
             documents = parse_calendar(handle)
             rows = query_calendar(
@@ -525,9 +526,15 @@ def cmd_inventory(args) -> int:
     try:
         handle = _open(args)
         d01 = load_d01_inventory(repo_root=args.repo) if args.m2 else None
-        output = query_archive_inventory(handle, d01=d01)
-        output['subject_scope'] = 'original-baseline-only; does not include incremental registry or generation'
-    except (baseline_mod.BaselineError, D01InventoryError, QueryError) as exc:
+        from .composite_binding import selected_snapshot
+        selected = selected_snapshot(handle, args.state) if args.state is not None else None
+        if selected is None:
+            output = query_archive_inventory(handle, d01=d01)
+            output['subject_scope'] = 'original-baseline-only; does not include incremental registry or generation'
+        else:
+            from .composite_readers import inventory
+            output = inventory(selected[0], d01)
+    except (baseline_mod.BaselineError, ServingIndexError, D01InventoryError, QueryError) as exc:
         _print_json({"result": "fail", "detail": str(exc)})
         return 2
     _print_json(output)
@@ -550,10 +557,13 @@ def cmd_quality(args) -> int:
     try:
         handle = _open(args)
         from .composite_binding import selected_snapshot
-        if selected_snapshot(handle, args.state) is not None:
-            raise QueryError('composite-unavailable', 'quality unavailable for selected composite generation')
-        document, _digest = load_index(args.state, handle)
-        output = query_data_quality(handle, document)
+        selected = selected_snapshot(handle, args.state)
+        if selected is None:
+            document, _digest = load_index(args.state, handle)
+            output = query_data_quality(handle, document)
+        else:
+            from .composite_readers import quality
+            output = quality(*selected)
     except (baseline_mod.BaselineError, ServingIndexError, QueryError) as exc:
         _print_json({"result": "fail", "detail": str(exc)})
         return 3
@@ -872,6 +882,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_common(p_inventory)
     p_inventory.add_argument("--repo", default=None, help="repository root holding D01 inventory")
+    p_inventory.add_argument("--state", default=None, help="serving state for selected composite; omit for explicitly baseline-only inventory")
     p_inventory.set_defaults(func=cmd_inventory)
 
     p_rebuild = sub.add_parser("rebuild", help="delete and rebuild class-(4) state (op b)")

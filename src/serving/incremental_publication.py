@@ -188,12 +188,14 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
 
 
 class CompositeBaseline:
-    def __init__(self, baseline, generation, payload, state=None):
+    def __init__(self, baseline, generation, payload, state=None, registry_conflicts=(), registry_accepted=()):
         self.original = baseline
         self.root = baseline.root
         self.manifest_digest = generation
         self.payload = payload
         self.state = state
+        self.registry_conflicts = registry_conflicts
+        self.registry_accepted = registry_accepted
     def path(self, relative):
         return self.original.path(relative)
     def open_text(self, relative):
@@ -207,6 +209,7 @@ def active_snapshot(baseline, registry_root, state):
     path = os.path.join(registry_root, 'source_registry.sqlite3')
     db, _ = _open(baseline, path)
     try:
+        db.execute('BEGIN')  # pointer, accepted inputs and D21 findings share one request snapshot
         if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='composite_active'").fetchone():
             return None
         row = db.execute('SELECT a.generation,g.payload FROM composite_active a JOIN composite_generations g ON g.id=a.generation WHERE a.singleton=1').fetchone()
@@ -235,6 +238,8 @@ def active_snapshot(baseline, registry_root, state):
                 ticker_catalog(catalog_db, catalog_meta)
             finally:
                 catalog_db.close()
-        return CompositeBaseline(baseline, generation, payload, state), payload['index']
+        findings = tuple(row[0] for row in db.execute('SELECT record FROM conflicts ORDER BY file_name,date,digest'))
+        accepted = tuple(db.execute('SELECT file_name,date,digest FROM accepted ORDER BY file_name,date'))
+        return CompositeBaseline(baseline, generation, payload, state, findings, accepted), payload['index']
     finally:
         db.close()

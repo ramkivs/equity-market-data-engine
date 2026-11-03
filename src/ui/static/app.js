@@ -504,7 +504,7 @@ function renderKpis() {
      the failure named — never a zero value, never a success glyph */
   if (q9 && q9.summary && q9.summary.archive_count !== undefined) {
     const d01ok = q9.summary.d01_inventory && q9.summary.d01_inventory.present;
-    cards.push({ label: "Archives Processed", value: fmtInt(q9.summary.archive_count), glyph: d01ok ? "ok" : "muted", detail: d01ok ? "D01 join verified (Q9)" : "D01 inventory absent (non-pinned baseline)" });
+    cards.push({ label: "Archives Processed", value: fmtInt(q9.summary.archive_count), glyph: d01ok ? "ok" : "muted", detail: q9.summary.composite_generation ? (d01ok ? "D01 verified for baseline only; incremental inputs have no D01 join" : "D01 absent for baseline and incremental inputs") : (d01ok ? "D01 join verified (Q9)" : "D01 inventory absent (non-pinned baseline)") });
   } else if (d.q9Error) {
     cards.push({ label: "Archives Processed", value: null, glyph: "muted", detail: "unavailable — Q9 failed: " + errText(d.q9Error) });
   } else {
@@ -519,7 +519,7 @@ function renderKpis() {
   }
   cards.push({ label: "Identity Records", value: null, glyph: "muted", detail: "No authorized count operation in the first release (Q5 is selector-scoped)" });
   if (q6) {
-    if (q6.calendar_present) cards.push({ label: "Trading Calendars", value: fmtInt(q6.record_count), glyph: "muted", detail: "served calendar days (Q6)" });
+    if (q6.calendar_present) cards.push({ label: "Trading Calendars", value: fmtInt(q6.record_count), glyph: "muted", detail: q6.scope && q6.scope.includes("baseline-calendar-absent") ? "file presence from baseline manifest and incremental inputs; original calendar absent" : "served calendar days (Q6)" });
     else cards.push({ label: "Trading Calendars", value: "absent", glyph: "muted", detail: "package carries no calendar (legitimate state)" });
   } else if (d.q6Error) {
     cards.push({ label: "Trading Calendars", value: null, glyph: "muted", detail: "unavailable — Q6 failed: " + errText(d.q6Error) });
@@ -1254,6 +1254,8 @@ function renderQuality() {
   if (d.reconciliation && d.reconciliation.by_result) {
     html += "<div class=\"muted\" style=\"font-size:10.5px;margin-top:6px\">by result: " + Object.entries(d.reconciliation.by_result).sort().map(([k, v]) => esc(k) + " " + fmtInt(v)).join(" · ") + "</div>";
   }
+  if (d.unresolved && d.unresolved.incremental_availability) html += '<div class="muted" style="font-size:10.5px;margin-top:6px">Unresolved records: baseline only; incremental evidence ' + esc(d.unresolved.incremental_availability) + '.</div>';
+  if (d.reconciliation && d.reconciliation.incremental_availability) html += '<div class="muted" style="font-size:10.5px;margin-top:6px">Reconciliation records: baseline only; incremental evidence ' + esc(d.reconciliation.incremental_availability) + '.</div>';
   if (d.changed && d.changed.note) html += '<div class="muted" style="font-size:10.5px;margin-top:6px">' + esc(d.changed.note) + "</div>";
   $("expl-quality").innerHTML = html;
 }

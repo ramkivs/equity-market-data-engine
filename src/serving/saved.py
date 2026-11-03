@@ -499,8 +499,15 @@ def execute_query_definition(
         index_document, _digest = load_index(state_root, baseline)
     else:
         baseline, index_document = composite
-        if mode not in (DATASET_MODE, DATE_RANGE_MODE, INSTRUMENT_MODE, FILTER_MODE, ASSOCIATIONS_MODE, RECORD_DETAIL_MODE, QUALIFICATION_MODE):
-            raise QueryError("composite-unavailable", "this query is unavailable for the bounded composite generation")
+        if mode == CALENDAR_MODE:
+            from .composite_readers import calendar
+            return calendar(baseline, params)
+        if mode == DATA_QUALITY_MODE:
+            from .composite_readers import quality
+            return quality(baseline, index_document)
+        if mode == ARCHIVE_MODE:
+            from .composite_readers import inventory
+            return inventory(baseline, load_d01_inventory(repo_root=repo_root) if m2 else None)
     if mode == DATASET_MODE:
         return query_dataset_summary(index_document, family=params.get("family"), year=params.get("year"))
     if mode == DATE_RANGE_MODE:

@@ -193,7 +193,7 @@ class UiApi:
         if self._registry_root is not None or has_binding(self._state_root):
             selected = self._composite()
             document['composite'] = {'generation': selected[0].manifest_digest if selected else None,
-                                     'supported_query_modes': ['Q1-dataset', 'Q2-date-range', 'Q3-instrument', 'Q4-filter', 'Q5-association', 'Q7-record-detail', 'Q10-qualification'] if selected else list(QUERY_MODES)}
+                                     'supported_query_modes': list(QUERY_MODES)}
         return document
 
     # ------------------------------------------------------------------ query

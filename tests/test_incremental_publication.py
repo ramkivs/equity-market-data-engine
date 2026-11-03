@@ -260,13 +260,17 @@ pub.publish(base,*a[1:])
         second = publish(*self.args)
         self.assertNotEqual(second['generation'], first['generation'])
 
-    def test_unsupported_application_modes_fail_closed(self):
+    def test_calendar_uses_manifest_when_baseline_calendar_absent(self):
         from ui.api import UiApi
         self.init(); publish(*self.args)
         api = UiApi(self.baseline, self.args[2], self.args[3], self.args[4], registry_root=self.args[1])
         status, body = api.dispatch('POST', '/api/query', {'mode':'Q6-calendar', 'params':{}})
-        self.assertNotEqual(status, 200)
-        self.assertEqual(body['check'], 'composite-unavailable')
+        self.assertEqual(status, 200, body)
+        result = body['query']
+        self.assertIn('baseline-calendar-absent', result['scope'])
+        day = next(item for item in result['records'] if item['trade_date'] == '2016-01-06')
+        self.assertTrue(day['file_present'])
+        self.assertIn('new.zip', day['member_names'])
 
     def test_publication_cli_commits_selected_generation(self):
         import subprocess, sys
