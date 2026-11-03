@@ -190,6 +190,7 @@ def main(argv=None):
     sub.add_parser('bind', help='validate and bind an explicitly configured existing registry; never replace data')
     sub.add_parser('bootstrap', help='one-time baseline continuity catalog bootstrap')
     sub.add_parser('catalog-verify', help='fully verify the baseline continuity catalog and any ticker proofs')
+    sub.add_parser('ticker-proof-tree-recover', help='verify or restore missing bound ticker proof tree nodes without replacing existing content')
     sub.add_parser('identity-proof-recover', help='verify or restore missing bound identity proof nodes without replacing existing content')
     sub.add_parser('pending-index-recover', help='validate the registry and explicitly rebuild the derived pending index')
     sub.add_parser('ticker-proof-recover', help='explicitly verify or restore missing bound ticker proofs without replacing existing files')
@@ -227,6 +228,9 @@ def main(argv=None):
         elif args.operation == 'bootstrap':
             from .continuity_catalog import bootstrap
             result = bootstrap(base, args.state, args.registry, args.saved_state, args.history_state, common[-1])
+        elif args.operation == 'ticker-proof-tree-recover':
+            from .ticker_proof_tree import recover
+            result = recover(base, args.state, args.registry, args.saved_state, args.history_state, common[-1])
         elif args.operation == 'identity-proof-recover':
             from .identity_proof_tree import recover
             result = recover(base, args.state, args.registry, args.saved_state, args.history_state, common[-1])

@@ -57,7 +57,7 @@ class IdentityTreePublicationTests(unittest.TestCase):
         selected = active_snapshot(self.baseline, self.args[1], self.args[2])
         p = dict(selected[0].payload)
         for name in ('delta', 'evidence', 'w2_delta', 'b2_delta', 'w2_overrides', 'b3_overrides',
-                     'candidates', 'symbol_delta', 'symbol_catalog', 'index_delta', 'index', 'identity_proof_tree'):
+                     'candidates', 'symbol_delta', 'symbol_catalog', 'index_delta', 'index', 'identity_proof_tree', 'ticker_proof_tree'):
             p.pop(name)
         p['format'] = 'catalog-composite/12.0'
         text = _json(p); generation = _sha(text)

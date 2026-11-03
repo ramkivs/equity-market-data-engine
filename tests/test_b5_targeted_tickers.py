@@ -77,10 +77,13 @@ class TargetedTickerTests(unittest.TestCase):
         path = self.proofpath()
         with sqlite3.connect(path) as db:
             db.execute('UPDATE groups SET row_count=row_count+1 WHERE rowid=(SELECT min(rowid) FROM groups)')
+        # The pinned tree remains authoritative for ordinary selected reads.
+        self.assertGreater(execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])['summary']['row_count'], 0)
+        from serving.composite_binding import ensure_registry_binding
         with self.assertRaisesRegex(QueryError, 'group manifest mismatch'):
-            execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])
+            ensure_registry_binding(self.baseline, self.args[2], self.args[1])
         with self.assertRaises(CatalogError):
-            publish(*self.args)
+            verify_catalog(self.baseline, self.args[2])
         path.unlink()
         with self.assertRaisesRegex(QueryError, 'proofs missing'):
             execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])
@@ -132,6 +135,7 @@ class TargetedTickerTests(unittest.TestCase):
         payload = dict(selected.payload)
         for key in ('delta', 'evidence', 'w2_delta', 'b2_delta', 'w2_overrides', 'b3_overrides'):
             payload[key] = dict(payload[key].references)
+        payload.pop('ticker_proof_tree')
         payload.pop('identity_proof_tree')
         payload.pop('candidate_tree')
         payload.pop('ticker_trees')

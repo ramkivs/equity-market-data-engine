@@ -27,6 +27,7 @@ class ReferenceTreePublicationTests(unittest.TestCase):
         payload = dict(selected[0].payload)
         for name in ('delta', 'evidence', 'w2_delta', 'b2_delta', 'w2_overrides', 'b3_overrides'):
             payload[name] = dict(payload[name].references)
+        payload.pop('ticker_proof_tree')
         payload.pop('identity_proof_tree')
         payload.pop('candidate_tree')
         payload.pop('ticker_trees')

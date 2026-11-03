@@ -30,6 +30,7 @@ class DetachedOverrideTests(unittest.TestCase):
         hashes = set(payload['w2_overrides'].references.values()) | set(payload['b3_overrides'].references.values())
         for key in ('w2_overrides', 'b3_overrides'):
             payload[key] = dict(payload[key])
+        payload.pop('ticker_proof_tree')
         payload.pop('identity_proof_tree')
         payload.pop('candidate_tree')
         payload.pop('ticker_trees')

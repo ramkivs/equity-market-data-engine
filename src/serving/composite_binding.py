@@ -118,7 +118,7 @@ def validate_registry(baseline, state_root, registry_root, recover_pending=False
                     identities.add(identity); sources.add(source); digests.add(item['digest'])
                     for row in rows:
                         yield source, row
-            if selected.payload.get('format') in ('catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0'):
+            if selected.payload.get('format') in ('catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0', 'catalog-composite/14.0'):
                 from .catalog_publication import _merge_tickers
                 derived_tickers = _merge_tickers({'observations': []}, retained_rows())
             else:
@@ -126,19 +126,19 @@ def validate_registry(baseline, state_root, registry_root, recover_pending=False
                     pass
             if identities != set(accepted) or set(delta) != sources or set(evidence) != digests:
                 raise ValueError('active generation has missing or extra accepted evidence')
-            if selected.payload.get('format') in ('catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0'):
+            if selected.payload.get('format') in ('catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0', 'catalog-composite/14.0'):
                 for kind in ('w2_delta', 'b2_delta'):
                     for identity in selected.payload[kind]:
                         selected.payload[kind][identity]  # verify all detached groups during explicit binding
-            if selected.payload.get('format') in ('catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0'):
+            if selected.payload.get('format') in ('catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0', 'catalog-composite/14.0'):
                 for kind in ('w2_overrides', 'b3_overrides'):
                     for identity in selected.payload[kind]:
                         selected.payload[kind][identity]
-            if selected.payload.get('format') in ('catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0'):
+            if selected.payload.get('format') in ('catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0', 'catalog-composite/14.0'):
                 actual_tickers = selected.payload['symbol_delta']['observations']  # full tree cross-check
                 if list(derived_tickers['observations']) != list(actual_tickers):
                     raise ValueError('ticker delta trees disagree with retained incremental rows')
-            if selected.payload.get('format') == 'catalog-composite/13.0':
+            if selected.payload.get('format') in ('catalog-composite/13.0', 'catalog-composite/14.0'):
                 from .continuity_catalog import open_catalog
                 from .identity_proof_tree import IdentityProofTree
                 catalog_db, catalog_meta = open_catalog(baseline, state_root)
@@ -147,6 +147,14 @@ def validate_registry(baseline, state_root, registry_root, recover_pending=False
                     IdentityProofTree(selected.payload['identity_proof_tree'], catalog_meta, db=db).verify(catalog_db, catalog_meta)
                 finally:
                     catalog_db.close()
+            if selected.payload.get('format') == 'catalog-composite/14.0':
+                from .ticker_proofs import open_proofs
+                from .ticker_proof_tree import TickerProofTree
+                proof_db, proof_meta, _ = open_proofs(state_root, selected.payload['catalog_binding'], selected.payload['ticker_proofs_binding'])
+                try:
+                    TickerProofTree(selected.payload['ticker_proof_tree'], proof_meta, db=db).verify(proof_db, proof_meta)
+                finally:
+                    proof_db.close()
             generation = selected.manifest_digest
         if recover_pending:
             from .pending_queue import recover as recover_pending_index

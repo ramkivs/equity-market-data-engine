@@ -29,6 +29,7 @@ class IdentityGroupTests(unittest.TestCase):
         old_hashes = set(p['w2_delta'].references.values()) | set(p['b2_delta'].references.values())
         p['w2_delta'] = dict(p['w2_delta']); p['b2_delta'] = dict(p['b2_delta'])
         p['w2_overrides'] = dict(p['w2_overrides']); p['b3_overrides'] = dict(p['b3_overrides'])
+        p.pop('ticker_proof_tree')
         p.pop('identity_proof_tree')
         p.pop('candidate_tree')
         p.pop('ticker_trees')

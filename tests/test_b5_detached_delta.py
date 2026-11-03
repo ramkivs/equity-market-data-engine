@@ -32,6 +32,7 @@ class DetachedDeltaTests(unittest.TestCase):
         payload['b2_delta'] = dict(payload['b2_delta'])
         payload['w2_overrides'] = dict(payload['w2_overrides'])
         payload['b3_overrides'] = dict(payload['b3_overrides'])
+        payload.pop('ticker_proof_tree')
         payload.pop('identity_proof_tree')
         payload.pop('candidate_tree')
         payload.pop('ticker_trees')

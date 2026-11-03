@@ -80,7 +80,7 @@ class IdentityProofTree:
             yield self.db
         else:
             if not self.path or os.path.islink(self.path) or not os.path.isfile(self.path):
-                raise ValueError('identity proof registry missing or unsafe')
+                raise ValueError('proof registry missing or unsafe')
             db = sqlite3.connect('file:' + quote(os.path.abspath(self.path), safe='/') + '?mode=ro', uri=True)
             try:
                 yield db
@@ -145,7 +145,7 @@ def recover(baseline, state, registry, saved, history, source_roots):
         if row is None or generation_sha(row[1]) != row[0]:
             raise ValueError('active generation missing or invalid')
         payload = json.loads(row[1])
-        if payload.get('format') != 'catalog-composite/13.0' or payload.get('baseline_manifest_sha256') != baseline.manifest_digest:
+        if payload.get('format') not in ('catalog-composite/13.0', 'catalog-composite/14.0') or payload.get('baseline_manifest_sha256') != baseline.manifest_digest:
             raise ValueError('active generation has no identity proof tree binding')
         cat, meta = open_catalog(baseline, state)
         cat.execute('BEGIN')

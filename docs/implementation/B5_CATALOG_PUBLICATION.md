@@ -54,7 +54,7 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
 
 ## Scope limits — no B5 completion claim
 
-* Catalog-backed generation format 13 stores incremental canonical rows and
+* Catalog-backed generation format 14 stores incremental canonical rows and
   evidence once as content-addressed SQLite blobs. Later publications refer to
   existing blobs without reading or copying their contents. Readers verify each
   accessed blob against its generation-pinned digest; old blobs remain available
@@ -82,8 +82,9 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   to an ordinal-keyed immutable tree after cross-checking accepted records,
   retained row/evidence references and incremental index metadata. Format-12
   baseline identity manifests migrate to a balanced, immutable proof tree after
-  one full compact-manifest verification. Migration does not reread historical
-  canonical data or prior source archives.
+  one full compact-manifest verification. Format-13 ticker manifests migrate to
+  a separate balanced proof tree after full compact-manifest validation.
+  Migration does not reread historical canonical data or prior source archives.
 * Baseline W2/B2 identity-group proofs are stored in a generation-pinned,
   content-addressed balanced search tree built once from the verified catalog
   group manifest. Ordinary publication and unaffected Q5/B3 reads verify only
@@ -95,6 +96,17 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   `identity-proof-recover` can explicitly reconstruct missing nodes from the
   verified compact manifest only when the resulting root matches the active
   generation; it never overwrites existing corrupt content.
+* Baseline ticker and identity/series lookup proofs are also pinned in a
+  content-addressed balanced tree. Selected lookups authenticate presence or
+  absence, and ticker-only requests authenticate the complete series range.
+  Normal publication and selected readers no longer scan the complete baseline
+  ticker-group manifest. Explicit registry binding verifies the entire tree
+  against that manifest; `catalog-verify` separately verifies the full ticker
+  observation census. Corruption outside a selected proof path is deferred
+  until it is accessed or explicitly verified. `ticker-proof-tree-recover`
+  reconstructs missing nodes only when the verified manifest yields the exact
+  pinned root; it never overwrites an existing corrupt node. This is separate
+  from `ticker-proof-recover`, which restores a missing ticker proof file.
 * W2 and B2 incremental projections are stored as content-addressed per-identity
   groups. Later publication reads and rewrites only groups affected by the new
   rows or ticker ambiguity; unaffected group contents are not copied or read.
@@ -147,9 +159,8 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   or unknown schema. Interrupted stage/publication transactions retain their
   previous seal. Older software that writes staged or accepted identity records
   without sealing the index will cause publication to fail closed until recovery.
-* This is **not yet fully delta-only**: publication still validates and scans the
-  compact baseline ticker-group manifest once per publication and loads the
-  baseline serving index. Affected
+* This is **not yet fully delta-only**: publication still loads the baseline
+  serving index. Affected
   ticker/identity groups can grow without bound and are rewritten as whole groups. Readers still compose and scan the complete index metadata, though
   neither path rereads historical canonical rows for this work. Very large or numerous deltas can still hit memory or SQLite
   single-value limits. No scalable long-running lifecycle is established.
@@ -209,7 +220,7 @@ This exceeds the former total 20,000-row guard, but is **not** an M2-scale test
 or a resource claim for approximately 5.7 million rows. No qualified M2 data was
 accessed or modified, and no historical archive was ingested.
 
-Linux disposable-fixture suite: **1113 tests run, 14 skipped**; existing
+Linux disposable-fixture suite: **1122 tests run, 14 skipped**; existing
 unrelated ResourceWarnings remain. Windows validation remains pending.
 
 The scoped-reader tests exercise calendar gap/holiday preservation, UDiFF date
@@ -314,3 +325,9 @@ no full identity manifest scan during ordinary publication or unaffected Q5,
 selected versus unrelated corruption, explicit full tree verification, and
 transactional format-12 migration with rollback and pinned readers. Bootstrap
 reads the existing compact group manifest once, not historical canonical rows.
+
+`tests/test_b5_ticker_proof_tree.py` covers logarithmic selected lookups and
+complete ticker-series ranges, absence, corruption deferral and full binding
+verification, no manifest scans during ordinary publication/reads, v13 migration
+rollback and pinned readers, and explicit missing-node recovery. Bootstrap uses
+the verified compact ticker proof manifest, never historical canonical rows.

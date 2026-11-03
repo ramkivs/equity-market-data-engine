@@ -165,7 +165,8 @@ class TargetedCatalog:
             if groups is None:
                 db, _, groups = open_proofs(self.state, self.catalog_meta, self.proof_meta)
             delta_series = self.delta.ticker_series(ticker) if hasattr(self.delta, 'ticker_series') else {row[1] for row in self.delta['observations'] if row[0] == ticker}
-            return {series for kind, selector, series in groups if kind == 'ticker' and selector == ticker} | delta_series
+            baseline_series = groups.ticker_series(ticker) if hasattr(groups, 'ticker_series') else {series for kind, selector, series in groups if kind == 'ticker' and selector == ticker}
+            return baseline_series | delta_series
         except (sqlite3.Error, ValueError, OSError) as exc:
             raise QueryError('composite-unavailable', 'ticker series lookup failed: %s' % exc) from exc
         finally:
@@ -244,7 +245,7 @@ def recover(baseline, state, registry, saved, history, source_roots):
         if row is None or generation_sha(row[1]) != row[0]:
             raise CatalogError('active generation missing or invalid')
         payload = json.loads(row[1])
-        if payload.get('format') not in ('catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0') or payload.get('baseline_manifest_sha256') != baseline.manifest_digest or not isinstance(payload.get('ticker_proofs_binding'), dict):
+        if payload.get('format') not in ('catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0', 'catalog-composite/14.0') or payload.get('baseline_manifest_sha256') != baseline.manifest_digest or not isinstance(payload.get('ticker_proofs_binding'), dict):
             raise CatalogError('active generation has no valid ticker proof binding')
         catalog_db, catalog_meta = open_catalog(baseline, state)
         catalog_db.execute('BEGIN')
