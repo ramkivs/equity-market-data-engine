@@ -6,6 +6,7 @@ never against, or represented as, the qualified M2 baseline.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
@@ -21,7 +22,14 @@ from serving.index import (
     load_index,
     write_index,
 )
-from serving.query import QueryError, query_instrument
+from serving.query import (
+    DATE_RANGE_QUERY_ID,
+    DATASET_QUERY_ID,
+    QueryError,
+    query_date_range,
+    query_dataset_summary,
+    query_instrument,
+)
 from serving.rebuild import rebuild_state
 
 
@@ -100,15 +108,11 @@ class QueryBase(unittest.TestCase):
 
 class Q3InstrumentQueryTests(QueryBase):
     def test_instrument_key_is_exact_as_published_per_family(self):
-        # Q3 matches the as-published (listing_symbol, series) — never normalised,
-        # and never conflated across families. In legacy13 listing_symbol is SYMBOL
-        # ("RELIANCE"); in udiff34 it is FinInstrmId ("500325") while the ticker
-        # sits in underlying_symbol (TckrSymb) (D05 §3.1 field map). An ISIN-based
-        # cross-family correlation is NOT authorized by Q3 (ISIN is a non-identity
-        # attribute — D16-10 Q3).
+        # Trading ticker matches the two eras through the valid ISIN; canonical
+        # values remain untouched, and the old raw FinInstrmId selector works.
         legacy = query_instrument(self.handle, self.index, "RELIANCE", "EQ")
-        self.assertEqual([r["business_date"] for r in legacy], ["2016-01-04", "2016-01-05", "2017-02-06"])
-        self.assertEqual([r["format_family"] for r in legacy], ["legacy13"] * 3)
+        self.assertEqual([r["business_date"] for r in legacy], ["2016-01-04", "2016-01-05", "2017-02-06", "2024-03-05"])
+        self.assertEqual([r["format_family"] for r in legacy], ["legacy13"] * 3 + ["udiff34"])
         udiff = query_instrument(self.handle, self.index, "500325", "EQ")
         self.assertEqual([r["business_date"] for r in udiff], ["2024-03-05"])
         self.assertEqual([r["format_family"] for r in udiff], ["udiff34"])
@@ -147,7 +151,7 @@ class Q3InstrumentQueryTests(QueryBase):
         # even though the symbol exists
         self.assertEqual(query_instrument(self.handle, self.index, "RELIANCE", "BE"), ())
         rows = query_instrument(self.handle, self.index, "RELIANCE", "EQ")
-        self.assertEqual(len(rows), 3)
+        self.assertEqual(len(rows), 4)
 
     def test_unknown_instrument_returns_empty_tuple_not_error(self):
         self.assertEqual(query_instrument(self.handle, self.index, "NOPE", "EQ"), ())
@@ -240,7 +244,7 @@ class StaleIndexTests(QueryBase):
         self.assertFalse(report["identical"])
         document, _digest = load_index(self.state, other_handle)
         rows = query_instrument(other_handle, document, "RELIANCE", "EQ")
-        self.assertEqual(len(rows), 3)
+        self.assertEqual(len(rows), 4)
 
     def test_corrupt_index_sidecar_is_refused(self):
         path = os.path.join(self.state, INDEX_DIGEST_FILENAME)
@@ -256,6 +260,206 @@ class StaleIndexTests(QueryBase):
         with self.assertRaises(ServingIndexError) as ctx:
             rebuild_state(self.handle, self.state)
         self.assertEqual(ctx.exception.check, "rebuild-refuse")
+
+
+class Q1DatasetQueryTests(QueryBase):
+    """Q1 dataset/partition selection and yearly summaries (D16-10 Q1)."""
+
+    def test_partition_selection_family_and_year(self):
+        result = query_dataset_summary(self.index, family="legacy13", year=2016)
+        self.assertEqual(result["query"], DATASET_QUERY_ID)
+        self.assertEqual(result["selection"], {"family": "legacy13", "year": 2016})
+        self.assertEqual(
+            result["partitions"],
+            [{"family": "legacy13", "year": "2016", "row_files": 2, "row_count": 5, "instrument_pairs": 3}],
+        )
+        self.assertEqual(result["summary"], {"row_files": 2, "row_count": 5, "instrument_pairs": 3})
+
+    def test_family_selection_aggregates_years(self):
+        result = query_dataset_summary(self.index, family="legacy13")
+        self.assertEqual([p["year"] for p in result["partitions"]], ["2016", "2017"])
+        self.assertEqual(result["summary"]["row_files"], 3)
+        self.assertEqual(result["summary"]["row_count"], 7)
+        # RELIANCE / TCS / WIPRO / INFY — the union is counted once
+        self.assertEqual(result["summary"]["instrument_pairs"], 4)
+
+    def test_year_selection_across_families(self):
+        result = query_dataset_summary(self.index, year=2024)
+        self.assertEqual([p["family"] for p in result["partitions"]], ["udiff34"])
+        self.assertEqual(result["summary"]["row_count"], 2)
+        self.assertEqual(result["summary"]["instrument_pairs"], 2)
+
+    def test_full_selection_matches_index_counts(self):
+        result = query_dataset_summary(self.index)
+        counts = self.index["counts"]
+        self.assertEqual(len(result["partitions"]), 3)
+        self.assertEqual(result["summary"]["row_files"], counts["row_files"])
+        self.assertEqual(result["summary"]["row_count"], counts["row_count"])
+        self.assertEqual(result["summary"]["instrument_pairs"], counts["instrument_pairs"])
+
+    def test_unknown_partition_returns_empty_not_error(self):
+        result = query_dataset_summary(self.index, family="nosuchfamily", year=1999)
+        self.assertEqual(result["partitions"], [])
+        self.assertEqual(result["summary"], {"row_files": 0, "row_count": 0, "instrument_pairs": 0})
+
+    def test_summaries_derive_from_index_only_without_scanning_rows(self):
+        # Q1's signature takes the index document alone — no baseline handle — so
+        # the summaries cannot scan canonical rows by construction.
+        document = {key: value for key, value in self.index.items()}
+        result = query_dataset_summary(document)
+        self.assertEqual(result["summary"]["row_count"], self.index["counts"]["row_count"])
+        # and the contract is fail-closed on a non-document input
+        with self.assertRaises(QueryError):
+            query_dataset_summary(None)
+
+
+class Q2DateRangeQueryTests(QueryBase):
+    """Q2 date-range query over canonical rows (D16-10 Q2).
+
+    Fixture dates: 2016-01-04 (3 rows), 2016-01-05 (2), 2017-02-06 (2),
+    2024-03-05 (2) — nine rows total.
+    """
+
+    def test_inclusive_boundaries_single_day(self):
+        rows = query_date_range(self.handle, self.index, "2016-01-04", "2016-01-04")
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(
+            sorted(row["source_values"]["listing_symbol"] for row in rows),
+            ["RELIANCE", "TCS", "WIPRO"],
+        )
+        # the day after the fixture's 2016-01-05 partition has no rows
+        self.assertEqual(query_date_range(self.handle, self.index, "2016-01-06", "2016-01-06"), ())
+
+    def test_cross_partition_date_range(self):
+        rows = query_date_range(self.handle, self.index, "2016-01-04", "2017-02-06")
+        self.assertEqual(len(rows), 7)
+        dates = [row["business_date"] for row in rows]
+        self.assertEqual(dates, sorted(dates))
+        self.assertEqual(set(dates), {"2016-01-04", "2016-01-05", "2017-02-06"})
+
+    def test_range_across_format_families(self):
+        rows = query_date_range(self.handle, self.index, "2024-03-05", "2024-12-31")
+        self.assertEqual(len(rows), 2)
+        for row in rows:
+            self.assertEqual(row["format_family"], "udiff34")
+            self.assertEqual(row["business_date"], "2024-03-05")
+
+    def test_empty_and_unknown_ranges_return_empty(self):
+        # a range with no matching data
+        self.assertEqual(query_date_range(self.handle, self.index, "1990-01-01", "1990-12-31"), ())
+        # a degenerate range (from > to)
+        self.assertEqual(query_date_range(self.handle, self.index, "2017-01-01", "2016-12-31"), ())
+
+    def test_exact_as_published_comparison_no_normalisation(self):
+        inside = query_date_range(self.handle, self.index, "2017-02-06", "2017-02-06")
+        self.assertEqual(len(inside), 2)
+        self.assertEqual(query_date_range(self.handle, self.index, "2017-02-05", "2017-02-05"), ())
+        self.assertEqual(query_date_range(self.handle, self.index, "2017-02-07", "2017-02-07"), ())
+
+    def test_as_published_values_and_none_vs_blank_preserved(self):
+        rows = query_date_range(self.handle, self.index, "2016-01-04", "2016-01-04")
+        wipro = [row for row in rows if row["source_values"]["listing_symbol"] == "WIPRO"][0]
+        # blank as published — carried blank, never defaulted (D05 §2 rule 3)
+        self.assertEqual(wipro["source_values"]["security_isin"], "")
+        self.assertEqual(wipro["isin_validity"], "BLANK")
+        # the served row equals the stored canonical row minus raw_line, plus envelope
+        with open(self.handle.path("partitions/legacy13/2016/rows/fix-leg-2016-01-04.csv.rows.jsonl"), "r", encoding="utf-8") as handle:
+            stored = None
+            for line in handle:
+                obj = json.loads(line)
+                if obj["source_values"]["listing_symbol"] == "WIPRO":
+                    stored = obj
+                    break
+        self.assertIsNotNone(stored)
+        served_view = {key: value for key, value in wipro.items() if key != "serving"}
+        stored_view = {key: value for key, value in stored.items() if key != "raw_line"}
+        self.assertEqual(served_view, stored_view)
+
+    def test_deterministic_ordering(self):
+        first = query_date_range(self.handle, self.index, "2016-01-01", "2024-12-31")
+        second = query_date_range(self.handle, self.index, "2016-01-01", "2024-12-31")
+        self.assertEqual(len(first), 9)
+        self.assertEqual(first, second)
+
+    def test_provenance_and_serving_envelope(self):
+        rows = query_date_range(self.handle, self.index, "2024-03-05", "2024-03-05")
+        self.assertEqual(len(rows), 2)
+        for row in rows:
+            self.assertIn("provenance", row)
+            envelope = row["serving"]
+            self.assertEqual(envelope["query"], DATE_RANGE_QUERY_ID)
+            self.assertEqual(envelope["date_from"], "2024-03-05")
+            self.assertEqual(envelope["date_to"], "2024-03-05")
+            self.assertEqual(envelope["source_file_family"], "udiff34")
+            self.assertEqual(envelope["source_file_year"], "2024")
+            self.assertTrue(envelope["source_file"].endswith(".rows.jsonl"))
+
+    def test_malformed_date_inputs_fail_closed(self):
+        for bad_from, bad_to in (
+            ("2016/01/04", "2016-01-05"),
+            ("04-01-2016", "2016-01-05"),
+            ("2016-01-04", "2016-13-40"),
+            ("", "2016-01-05"),
+            (None, "2016-01-05"),
+            ("2016-01-04", 20160105),
+        ):
+            with self.assertRaises(QueryError):
+                query_date_range(self.handle, self.index, bad_from, bad_to)
+
+    def test_raw_line_never_served(self):
+        rows = query_date_range(self.handle, self.index, "2016-01-01", "2024-12-31")
+        self.assertEqual(len(rows), 9)
+        for row in rows:
+            self.assertNotIn("raw_line", row)
+
+
+class IndexV12FormatTests(QueryBase):
+    """serving-index/1.2: per-file business_date bounds, flag census, format refusal."""
+
+    def test_format_marker_and_per_file_date_bounds(self):
+        document, _digest = load_index(self.state, self.handle)
+        self.assertEqual(document["format"], "serving-index/1.2")
+        expected = {
+            "partitions/legacy13/2016/rows/fix-leg-2016-01-04.csv.rows.jsonl": ("2016-01-04", "2016-01-04"),
+            "partitions/legacy13/2016/rows/fix-leg-2016-01-05.csv.rows.jsonl": ("2016-01-05", "2016-01-05"),
+            "partitions/legacy13/2017/rows/fix-leg-2017-02-06.csv.rows.jsonl": ("2017-02-06", "2017-02-06"),
+            "partitions/udiff34/2024/rows/fix-udf-2024-03-05.csv.rows.jsonl": ("2024-03-05", "2024-03-05"),
+        }
+        self.assertEqual(set(document["files"]), set(expected))
+        for relative, (lo, hi) in expected.items():
+            meta = document["files"][relative]
+            self.assertEqual(meta["business_date_min"], lo)
+            self.assertEqual(meta["business_date_max"], hi)
+
+    def test_independent_builds_byte_identical_with_new_fields(self):
+        document, digest = load_index(self.state, self.handle)
+        rebuilt = build_index(self.handle)
+        self.assertEqual(rebuilt, document)
+        self.assertEqual(write_index(self.state, rebuilt), digest)
+
+    def test_old_and_unknown_formats_refused_fail_closed(self):
+        import hashlib
+
+        from serving.index import canonical_json
+
+        document, _digest = load_index(self.state, self.handle)
+        for old_format in ("serving-index/1.0", "serving-index/1.1", "serving-index/9.9"):
+            old = json.loads(json.dumps(document))
+            old["format"] = old_format
+            if old_format == "serving-index/1.0":
+                for meta in old["files"].values():
+                    meta.pop("business_date_min", None)
+                    meta.pop("business_date_max", None)
+            if old_format == "serving-index/1.1":
+                old.pop("flag_census", None)
+            text = canonical_json(old) + "\n"
+            digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            with open(os.path.join(self.state, INDEX_FILENAME), "w", encoding="utf-8", newline="") as handle:
+                handle.write(text)
+            with open(os.path.join(self.state, INDEX_DIGEST_FILENAME), "w", encoding="utf-8", newline="") as handle:
+                handle.write("%s  %s\n" % (digest, INDEX_FILENAME))
+            with self.assertRaises(ServingIndexError):
+                load_index(self.state, self.handle)
 
 
 if __name__ == "__main__":

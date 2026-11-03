@@ -21,6 +21,12 @@ venv/
 # Serving derived state (class 4 — rebuildable; never committed; D24)
 serving-state/
 
+# Saved-query store (class 4 user state — distinct root, D37-DEC C1(a); never committed)
+saved-state/
+
+# Query-history store (class 4 user state — distinct root, D37-DEC C2(a); never committed)
+history-state/
+
 # OS / editor
 .DS_Store
 Thumbs.db

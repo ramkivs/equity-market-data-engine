@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>I4 Historical Data Engine (10-Year NSE Corpus)</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div id="app">
+  <!-- ======================= title bar ======================= -->
+  <header id="titlebar" role="banner">
+    <div class="tb-mark" aria-hidden="true">I4</div>
+    <div class="tb-titles">
+      <div class="tb-title">I4 Historical Data Engine (10-Year NSE Corpus)</div>
+      <div class="tb-subtitle">I4 Historical Data Engine — 10-Year NSE Corpus — read-only serving view</div>
+    </div>
+    <div class="tb-right">
+      <span id="tb-service" class="tb-service" title="Service state (from the local serving adapter)">connecting…</span>
+    </div>
+  </header>
+
+  <div id="frame">
+    <!-- ======================= navigation rail ======================= -->
+    <nav id="navrail" role="navigation" aria-label="Primary">
+      <div class="nav-group">
+        <button class="nav-item" data-page="dashboard" aria-current="page">
+          <span class="nav-ico" aria-hidden="true">&#9632;</span><span class="nav-label">Dashboard</span>
+        </button>
+        <button class="nav-item" data-page="explorer">
+          <span class="nav-ico" aria-hidden="true">&#9998;</span><span class="nav-label">Data Explorer</span>
+        </button>
+      </div>
+      <div class="nav-group">
+        <div class="nav-item nav-unavailable" title="Not in the first-release scope (D16-12). Archive inventory is served on the Dashboard (Q9).">
+          <span class="nav-ico" aria-hidden="true">&#128190;</span><span class="nav-label">Archives</span><span class="nav-badge">unavailable</span>
+        </div>
+        <div class="nav-item nav-unavailable" title="Not a first-release page. Reconciliation facts are served via record detail (Q7) and the quality view (Q8).">
+          <span class="nav-ico" aria-hidden="true">&#8644;</span><span class="nav-label">Reconciliation</span><span class="nav-badge">unavailable</span>
+        </div>
+        <div class="nav-item nav-unavailable" title="Not in the first-release scope. No serving operation provides replay/verification views.">
+          <span class="nav-ico" aria-hidden="true">&#8634;</span><span class="nav-label">Determinism &amp; Replay</span><span class="nav-badge">unavailable</span>
+        </div>
+        <div class="nav-item nav-unavailable" title="Not in the first-release scope. No report-serving operation exists.">
+          <span class="nav-ico" aria-hidden="true">&#128202;</span><span class="nav-label">Reports</span><span class="nav-badge">unavailable</span>
+        </div>
+        <div class="nav-item nav-unavailable" title="Not a first-release page. Run identity and status are served on the Dashboard (Q10).">
+          <span class="nav-ico" aria-hidden="true">&#9881;</span><span class="nav-label">Engine Status</span><span class="nav-badge">unavailable</span>
+        </div>
+        <div class="nav-item nav-unavailable" title="Not in the first-release scope. The UI exposes no configuration-changing operation.">
+          <span class="nav-ico" aria-hidden="true">&#9881;</span><span class="nav-label">Configuration</span><span class="nav-badge">unavailable</span>
+        </div>
+      </div>
+    </nav>
+
+    <!-- ======================= content ======================= -->
+    <main id="content">
+      <section id="page-dashboard" class="page" aria-label="Dashboard">
+        <div class="page-head">
+          <div>
+            <h1 class="page-title">10-Year NSE Historical Data</h1>
+            <div class="page-sub" id="dash-sub">Read-only view over the qualified package — dashboard and Data Explorer surfaces of the first release.</div>
+          </div>
+          <div id="dash-run" class="run-summary" aria-label="Run summary"></div>
+        </div>
+        <div class="actions-row" role="group" aria-label="Processing actions (unavailable in the first release)">
+          <button class="btn btn-primary" disabled title="Not authorized in the first release: the processing trigger is excluded (D16-12) and incremental ingestion is withheld (D23 §19).">Run New Processing</button>
+          <button class="btn" disabled title="Not a first-release UI surface: package verification is a CLI maintenance function outside the authorized serving operations.">Verify Existing Run</button>
+          <span class="actions-note">unavailable — withheld in the first release</span>
+        </div>
+        <div id="dash-kpis" class="kpi-row" aria-label="Key metrics"></div>
+        <div class="chart-row">
+          <div class="panel chart-panel-grow" id="panel-rows-year">
+            <div class="panel-head">Rows by Year</div>
+            <div class="panel-body" id="dash-rows-year"><div class="state-loading">Loading…</div></div>
+          </div>
+          <div class="panel" id="panel-segments">
+            <div class="panel-head">Rows by Published Series Code</div>
+            <div class="panel-body" id="dash-segments"><div class="state-loading">Loading…</div></div>
+          </div>
+          <div class="panel" id="panel-coverage">
+            <div class="panel-head">Data Coverage</div>
+            <div class="panel-body" id="dash-coverage"><div class="state-loading">Loading…</div></div>
+          </div>
+        </div>
+        <div class="archive-row">
+          <div class="panel" id="panel-archive-browser">
+            <div class="panel-head">
+              <span>Archive Browser</span>
+              <span class="panel-tools">
+                <span id="archive-count" class="muted"></span>
+                <input id="archive-search" class="input" type="search" placeholder="Search archive, date, series…" aria-label="Search archives">
+                <select id="archive-segment" class="input" aria-label="Filter by published series code"><option value="">All series codes</option></select>
+                <select id="archive-year" class="input" aria-label="Filter by year"><option value="">All years</option></select>
+              </span>
+            </div>
+            <div class="panel-body table-wrap" id="dash-archives"><div class="state-loading">Loading…</div></div>
+          </div>
+          <div class="panel" id="panel-archive-detail">
+            <div class="panel-head">Archive Detail</div>
+            <div class="panel-body" id="dash-archive-detail"><div class="state-empty">Select an archive row to view its served metadata.</div></div>
+          </div>
+        </div>
+        <div class="panel" id="panel-logs">
+          <div class="panel-head">Engine Logs</div>
+          <div class="panel-body">
+            <div class="state-unavailable">Unavailable — no authorized log-serving operation exists in the first-release serving contract (D16-12; D23 §19). Log contents are never fabricated.</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-explorer" class="page" hidden aria-label="Data Explorer">
+        <div class="page-head">
+          <div>
+            <h1 class="page-title">Data Explorer</h1>
+            <div class="page-sub" id="expl-sub">Contract-driven queries (Q1–Q10), record detail, provenance, and quality over the served package.</div>
+          </div>
+          <div id="expl-dataset" class="run-summary" aria-label="Dataset summary"></div>
+        </div>
+        <div class="explorer-body">
+        <aside id="saved-sidebar" class="saved-sidebar" aria-label="Saved queries (D38)">
+          <div class="saved-sidebar-head">
+            <span class="section-label">Saved Queries</span>
+            <button id="saved-new" class="btn btn-small" title="Start a new query in the Query Builder; persist it with Save Query">New Query</button>
+          </div>
+          <div id="saved-sidebar-list" class="saved-sidebar-list"><div class="state-loading">Loading…</div></div>
+        </aside>
+        <div class="explorer-main">
+        <div class="tabstrip" role="tablist" aria-label="Query modes">
+          <button class="tab" role="tab" data-tab="builder" aria-selected="true">Query Builder</button>
+          <button class="tab" role="tab" data-tab="advanced" aria-selected="false" disabled
+            title="Not available: an alternate or more powerful query path would violate D23 §18(8) — no other query path exists.">Advanced Query <span class="tab-badge">unavailable</span></button>
+          <button class="tab" role="tab" data-tab="saved" aria-selected="false">Saved Queries</button>
+          <button class="tab" role="tab" data-tab="history" aria-selected="false">Query History</button>
+        </div>
+
+        <!-- ============ Query Builder ============ -->
+        <div class="tabpane" id="tabpane-builder" role="tabpanel">
+          <div class="panel">
+            <div class="panel-body builder-grid">
+              <div class="builder-section">
+                <div class="section-label">Main filters</div>
+                <div class="field-row">
+                  <label class="field">
+                    <span class="field-name">Query mode</span>
+                    <select id="q-mode" class="input">
+                      <option value="Q2-date-range">Date range (Q2)</option>
+                      <option value="Q3-instrument" selected>Instrument (Q3)</option>
+                      <option value="Q4-filter">Exact-value filters (Q4)</option>
+                    </select>
+                  </label>
+                  <label class="field" id="fld-date-from">
+                    <span class="field-name">From (inclusive)</span>
+                    <input id="q-date-from" class="input" type="date" aria-label="Date from">
+                  </label>
+                  <label class="field" id="fld-date-to">
+                    <span class="field-name">To (inclusive)</span>
+                    <input id="q-date-to" class="input" type="date" aria-label="Date to">
+                  </label>
+                  <label class="field" id="fld-symbol">
+                    <span class="field-name">Trading symbol (or published listing_symbol)</span>
+                    <input id="q-symbol" class="input" type="text" placeholder="Trading symbol or FinInstrmId" aria-label="Published listing symbol">
+                  </label>
+                  <label class="field" id="fld-series">
+                    <span class="field-name">Series (exact)</span>
+                    <input id="q-series" class="input" type="text" placeholder="e.g. EQ" aria-label="Series">
+                  </label>
+                  <label class="field" id="fld-year">
+                    <span class="field-name">Year (optional)</span>
+                    <input id="q-year" class="input" type="number" min="1000" max="9999" placeholder="e.g. 2020" aria-label="Year">
+                  </label>
+                </div>
+                <div id="q4-block">
+                  <div class="section-label">Optional exact-value filters (AND; fields: series, segment, source, instrument_type, symbol)</div>
+                  <div id="q4-rows"></div>
+                  <div class="q4-add"><button id="q4-add" class="btn btn-small">Add Filter</button>
+                    <span class="muted" id="q4-note">Values must be exact as-published strings; no normalization, no operators other than equality.</span>
+                  </div>
+                </div>
+                <div class="section-label">Quick filters
+                  <span class="muted">(deterministic presets over the authorized query surface)</span>
+                </div>
+                <div id="q-quick" class="quick-row" role="group" aria-label="Quick filters"></div>
+              </div>
+              <div class="builder-actions">
+                <button id="btn-run" class="btn btn-primary">Run Query</button>
+                <button id="btn-reset" class="btn">Reset</button>
+                <button id="btn-save" class="btn">Save Query</button>
+                <div id="builder-error" class="form-error" role="alert" hidden></div>
+                <div id="builder-busy" class="muted" hidden>Running…</div>
+              </div>
+            </div>
+          </div>
+          <div class="results-row">
+            <div class="panel" id="panel-results">
+              <div class="panel-head">
+                <span id="results-title">Query Results</span>
+                <span class="panel-tools">
+                  <span id="results-count" class="muted"></span>
+                  <label class="tool-label">Rows per page
+                    <select id="results-perpage" class="input" aria-label="Rows per page">
+                      <option>25</option><option>50</option><option>100</option>
+                    </select>
+                  </label>
+                  <button id="results-prev" class="btn btn-small" disabled>Prev</button>
+                  <span id="results-range" class="muted"></span>
+                  <button id="results-next" class="btn btn-small" disabled>Next</button>
+                </span>
+              </div>
+              <div class="panel-body table-wrap" id="expl-results"><div class="state-empty">Run a query to see served rows.</div></div>
+            </div>
+            <div class="panel" id="panel-inspector">
+              <div class="panel-head">
+                <span>Record Inspector</span>
+                <span class="panel-tools">
+                  <button id="ins-prev" class="btn btn-small" disabled title="Previous record in the served result set">Prev</button>
+                  <button id="ins-next" class="btn btn-small" disabled title="Next record in the served result set">Next</button>
+                </span>
+              </div>
+              <div class="panel-body" id="expl-inspector"><div class="state-empty">Select a result row to view its served detail (Q7), related records (Q5), and reconciliation facts.</div></div>
+            </div>
+          </div>
+          <div class="chart-row explorer-charts">
+            <div class="panel" id="panel-price">
+              <div class="panel-head">
+                <span>Price Chart</span>
+                <span class="panel-tools">
+                  <select id="price-field" class="input" aria-label="Price field">
+                    <option value="price_close" selected>Close Price</option>
+                    <option value="price_open">Open Price</option>
+                    <option value="price_high">High Price</option>
+                    <option value="price_low">Low Price</option>
+                    <option value="price_last">Last Price</option>
+                    <option value="price_prev_close">Previous Close</option>
+                    <option value="traded_value">Turnover</option>
+                  </select>
+                  <label class="tool-check"><input id="price-volume" type="checkbox" aria-label="Show volume bars"> Volume</label>
+                </span>
+              </div>
+              <div class="panel-body" id="expl-price"><div class="state-empty">Runs with the active query results (as-published values only).</div></div>
+            </div>
+            <div class="panel" id="panel-yearly">
+              <div class="panel-head">Yearly Summary</div>
+              <div class="panel-body" id="expl-yearly"><div class="state-empty">Derived from the active query results (documented, deterministic definitions).</div></div>
+            </div>
+            <div class="panel" id="panel-quality">
+              <div class="panel-head">Data Quality (Q8)</div>
+              <div class="panel-body" id="expl-quality"><div class="state-loading">Loading…</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============ Saved Queries ============ -->
+        <div class="tabpane" id="tabpane-saved" role="tabpanel" hidden>
+          <div class="panel">
+            <div class="panel-head">
+              <span>Saved Queries (D38)</span>
+              <span class="panel-tools"><span id="saved-count" class="muted"></span></span>
+            </div>
+            <div class="panel-body" id="expl-saved"><div class="state-loading">Loading…</div></div>
+          </div>
+        </div>
+
+        <!-- ============ Query History ============ -->
+        <div class="tabpane" id="tabpane-history" role="tabpanel" hidden>
+          <div class="panel">
+            <div class="panel-head">
+              <span>Query History (D39)</span>
+              <span class="panel-tools">
+                <button id="hist-record" class="btn btn-small">Record current query execution</button>
+              </span>
+            </div>
+            <div class="panel-body" id="expl-history"><div class="state-loading">Loading…</div></div>
+            <div class="panel-body" id="hist-detail"></div>
+          </div>
+        </div>
+        </div>
+      </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ======================= status bar ======================= -->
+  <footer id="statusbar" role="contentinfo">
+    <span id="sb-state" class="sb-item">state: connecting</span>
+    <span id="sb-run" class="sb-item">run: …</span>
+    <span id="sb-engine" class="sb-item">engine: …</span>
+    <span id="sb-archives" class="sb-item">archives: …</span>
+    <span id="sb-rows" class="sb-item">rows: …</span>
+    <span class="sb-flex"></span>
+    <span class="sb-item muted">read-only serving view — no live data, no processing</span>
+  </footer>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

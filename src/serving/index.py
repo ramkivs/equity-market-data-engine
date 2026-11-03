@@ -2,9 +2,12 @@
 
 The index is a pure derivation of the verified baseline: one linear pass over every
 class-(1) row file collecting, per row file, the set of (listing_symbol, series)
-instrument pairs present plus the row count. It stores no row values, no raw line
-text, and no clock/host/path value; identical baseline bytes yield a byte-identical
-index (D05 §9 conventions; MD-10 criteria 1/4).
+instrument pairs present, the row count, the minimum/maximum as-published
+``business_date`` (format serving-index/1.1), and — in serving-index/1.2 — the
+global flag census: per governed flag ``name`` (the D05 §5 ``flags[].name``
+field on canonical rows), the number of rows carrying that flag. It stores no row
+values, no raw line text, and no clock/host/path value; identical baseline bytes
+yield a byte-identical index (D05 §9 conventions; MD-10 criteria 1/4).
 
 Deleting the index is never a data event (D16-07): it is always rebuildable from the
 baseline, and when it ever disagrees with the baseline the baseline wins and the
@@ -20,10 +23,12 @@ import os
 from typing import Optional, Tuple
 
 from .baseline import Baseline
+from .paths import validate_roots, validate_store_root
+from .atomic import atomic_write_text
 
 INDEX_FILENAME = "serving_index.json"
 INDEX_DIGEST_FILENAME = "serving_index.sha256"
-INDEX_FORMAT = "serving-index/1.0"
+INDEX_FORMAT = "serving-index/1.2"
 
 
 class ServingIndexError(Exception):
@@ -41,8 +46,7 @@ def canonical_json(obj) -> str:
 
 
 def _write_text(path: str, text: str) -> None:
-    with open(path, "w", encoding="utf-8", newline="") as handle:
-        handle.write(text)
+    atomic_write_text(path, text, sync=True)
 
 
 def _sha256_text(text: str) -> str:
@@ -68,7 +72,9 @@ def build_index(baseline: Baseline) -> dict:
     """One linear, read-only pass over the class-(1) row files.
 
     Deterministic: files are scanned in manifest order (already sorted), pair lists
-    are sorted, documents are canonically keyed, and no clock/host/path value is
+    are sorted, per-file date bounds are order-independent min/max over the
+    as-published ``business_date`` values (files without a dated row carry null
+    bounds), documents are canonically keyed, and no clock/host/path value is
     embedded. A row that fails to parse or lacks the contract keys is a package
     integrity failure (fail closed), never a silently skipped record.
     """
@@ -76,12 +82,15 @@ def build_index(baseline: Baseline) -> dict:
     partitions = {}
     global_pairs = set()
     rows_total = 0
+    flag_census = {}
     for relative in baseline.row_files():
         parts = relative.split("/")
         family, year = parts[1], parts[2]
         stem = parts[4][: -len(".rows.jsonl")]
         pairs = set()
         count = 0
+        date_min: Optional[str] = None
+        date_max: Optional[str] = None
         with open(baseline.path(relative), "r", encoding="utf-8") as handle:
             for line in handle:
                 if not line.strip():
@@ -99,6 +108,25 @@ def build_index(baseline: Baseline) -> dict:
                 series = values.get("series") or ""
                 pairs.add((symbol, series))
                 count += 1
+                business_date = obj.get("business_date")
+                if isinstance(business_date, str) and business_date:
+                    if date_min is None or business_date < date_min:
+                        date_min = business_date
+                    if date_max is None or business_date > date_max:
+                        date_max = business_date
+                # serving-index/1.2: global flag census (D05 §5; never gating).
+                # The census counts what the canonical rows publish, per flag
+                # ``name``; a row without a ``flags`` list carries none. A flag
+                # entry that is not a record with a string ``name`` is a package
+                # integrity failure (fail closed), never a silently skipped flag.
+                flags = obj.get("flags", [])
+                if not isinstance(flags, list):
+                    raise ServingIndexError("index-scan", "canonical row with a non-list flags field in %s" % relative)
+                for flag in flags:
+                    if not isinstance(flag, dict) or not isinstance(flag.get("name"), str) or not flag.get("name"):
+                        raise ServingIndexError("index-scan", "canonical row with a malformed flag entry in %s" % relative)
+                    name = flag["name"]
+                    flag_census[name] = flag_census.get(name, 0) + 1
         rows_total += count
         pairs_list = sorted([list(pair) for pair in pairs])
         files[relative] = {
@@ -107,6 +135,8 @@ def build_index(baseline: Baseline) -> dict:
             "member_stem": stem,
             "row_count": count,
             "instruments": pairs_list,
+            "business_date_min": date_min,
+            "business_date_max": date_max,
         }
         for pair in pairs:
             global_pairs.add(pair)
@@ -122,6 +152,7 @@ def build_index(baseline: Baseline) -> dict:
         "package": _package_identity(baseline),
         "partitions": partitions,
         "files": files,
+        "flag_census": flag_census,
         "counts": {
             "row_files": len(files),
             "row_count": rows_total,
@@ -136,6 +167,7 @@ def write_index(state_dir: str, document: dict) -> str:
     Returns the index file's sha256. The state directory is created if absent and
     must live OUTSIDE the baseline package (never inside it).
     """
+    validate_store_root(state_dir, "state")
     os.makedirs(state_dir, exist_ok=True)
     text = canonical_json(document) + "\n"
     digest = _sha256_text(text)
@@ -151,18 +183,27 @@ def load_index(state_dir: str, baseline: Baseline) -> Tuple[dict, str]:
     embedded package identity differs from the verified baseline is stale and is
     refused (``ServingIndexError``) — the remedy is a rebuild, never a silent serve.
     """
+    validate_roots(package=baseline.root, state=state_dir)
     index_path = os.path.join(state_dir, INDEX_FILENAME)
     digest_path = os.path.join(state_dir, INDEX_DIGEST_FILENAME)
     if not (os.path.isfile(index_path) and os.path.isfile(digest_path)):
         raise ServingIndexError("index-load", "serving state missing or incomplete (run a build)")
-    with open(index_path, "r", encoding="utf-8") as handle:
-        text = handle.read()
-    digest = _sha256_text(text)
-    with open(digest_path, "r", encoding="utf-8") as handle:
-        sidecar = handle.read()
+    try:
+        with open(index_path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+        digest = _sha256_text(text)
+        with open(digest_path, "r", encoding="utf-8") as handle:
+            sidecar = handle.read()
+    except (UnicodeError, OSError) as exc:
+        raise ServingIndexError("index-load", "cannot read serving state: %s" % exc)
     if sidecar != "%s  %s\n" % (digest, INDEX_FILENAME):
         raise ServingIndexError("index-load", "index digest sidecar mismatch")
-    document = json.loads(text)
+    try:
+        document = json.loads(text)
+    except (ValueError, TypeError) as exc:
+        raise ServingIndexError("index-load", "invalid index JSON: %s" % exc)
+    if not isinstance(document, dict):
+        raise ServingIndexError("index-load", "index is not an object")
     if document.get("format") != INDEX_FORMAT:
         raise ServingIndexError("index-load", "unknown index format %r" % document.get("format"))
     identity = document.get("package", {})

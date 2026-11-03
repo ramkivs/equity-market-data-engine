@@ -1,0 +1,10 @@
+NON-AUTHORITATIVE UI DESIGN REFERENCES
+Repository: ramkivs/nse-historical-data-engine
+Base commit: 69977017ffca944921f231d7904347bc582b6392
+Purpose: Original visual references for the Historical Data Engine UI.
+Authority: Design reference only; does not grant implementation authority.
+Published specification: docs/design/I4_HISTORICAL_DATA_ENGINE_UI_SPEC.md
+Specification commit: 20bf823842bb7209bea0cf5a0f53adb0c43869b8
+
+10y historical engine-data explorer.png | bytes=1842012 | SHA256=53F20B6484F02AC28F4FDF5F80125B38E138E256EBF8BA5D26CFB3EE9B46BD19
+10y historical engine.png | bytes=1773767 | SHA256=FA11F0E867D0F8AA1DF41B3AB88C51D27CE2CCD50E790E5181ECF45B2AA1AF85

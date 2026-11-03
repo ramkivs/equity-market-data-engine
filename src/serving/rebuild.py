@@ -15,6 +15,7 @@ import os
 from typing import Optional
 
 from .baseline import Baseline
+from .paths import validate_roots, validate_store_root
 from .index import (
     INDEX_DIGEST_FILENAME,
     INDEX_FILENAME,
@@ -26,18 +27,20 @@ from .index import (
 KNOWN_STATE_FILES = frozenset({INDEX_FILENAME, INDEX_DIGEST_FILENAME})
 
 
-def rebuild_state(baseline: Baseline, state_dir: str) -> dict:
+def rebuild_state(baseline: Baseline, state_dir: str, replace_only: bool = False) -> dict:
     """Delete and rebuild the serving state. Returns a deterministic report.
 
     ``identical`` is True when the rebuilt index is byte-identical to the previous
     one (the expected outcome for an unchanged baseline — the reproducibility
     proof), False when the baseline content changed (the baseline always wins).
     """
+    validate_roots(package=baseline.root, state=state_dir)
+    validate_store_root(state_dir, "state")
     before: Optional[str] = None
     if os.path.isdir(state_dir):
         present = set(os.listdir(state_dir))
         unknown = present - KNOWN_STATE_FILES
-        if unknown:
+        if unknown and not replace_only:
             raise ServingIndexError(
                 "rebuild-refuse",
                 "state directory contains unknown files (refusing to delete): %s" % sorted(unknown)[:10],
@@ -46,8 +49,9 @@ def rebuild_state(baseline: Baseline, state_dir: str) -> dict:
         if os.path.isfile(index_path):
             with open(index_path, "rb") as handle:
                 before = _sha256_bytes(handle.read())
-        for name in sorted(present & KNOWN_STATE_FILES):
-            os.remove(os.path.join(state_dir, name))
+        if not replace_only:
+            for name in sorted(present & KNOWN_STATE_FILES):
+                os.remove(os.path.join(state_dir, name))
     document = build_index(baseline)
     after = write_index(state_dir, document)
     return {

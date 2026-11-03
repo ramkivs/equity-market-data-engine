@@ -148,9 +148,22 @@ class Baseline:
     run_record: dict
     total_bytes: int
     checks_passed: Tuple[str, ...]
+    verify_on_access: bool = False
 
     def path(self, relative_path: str) -> str:
-        return os.path.join(self.root, relative_path.replace("/", os.sep))
+        path = os.path.join(self.root, relative_path.replace("/", os.sep))
+        if self.verify_on_access:
+            expected = next((digest for digest, name in self.manifest_entries if name == relative_path), None)
+            if expected is not None:
+                try:
+                    valid = os.path.isfile(path) and sha256_file(path) == expected
+                except OSError as exc:
+                    raise BaselineError("verify-access", "cannot read qualified file %s: %s" % (relative_path, exc)) from exc
+                if not valid:
+                    raise BaselineError("verify-access", "qualified file missing or digest mismatch: %s" % relative_path)
+            elif relative_path not in UNMANIFESTED and os.path.exists(path):
+                raise BaselineError("verify-access", "file is not in the qualified manifest: %s" % relative_path)
+        return path
 
     def row_files(self) -> Tuple[str, ...]:
         return tuple(
@@ -186,11 +199,17 @@ def open_baseline(
 ) -> Baseline:
     """Open ``root`` read-only, verify it, and return a :class:`Baseline` handle.
 
+    ``verify_files=False`` checks manifest and qualification metadata at open,
+    and checks each manifested file's digest on access through ``path``. It
+    does not claim that unaccessed files were checked. ``verify_files=True``
+    remains the explicit full verification operation.
+
     ``spec`` pins the expected identity (required for the qualified M2 baseline).
     With ``spec=None`` only self-consistency is verified (structure, internal
     digests, completion marker) — the resulting handle is *not* pinned to any
     recorded qualified identity and must not be treated as the M2 baseline.
     """
+    root = os.path.realpath(os.path.abspath(root))
     if not os.path.isdir(root):
         raise BaselineError("open", "package directory not found: %s" % root)
     manifest_path = os.path.join(root, PACKAGE_MANIFEST)
@@ -215,7 +234,7 @@ def open_baseline(
             "missing=%s hash_mismatch=%s"
             % (sorted(missing)[:10], sorted(mismatched)[:10]),
         )
-    checks_passed.append("verify-02")
+    checks_passed.append("verify-02" if verify_files else "verify-02-presence-only")
 
     # verify-03: no unlisted file anywhere in the package
     listed = {relative for _digest, relative in entries}
@@ -251,18 +270,23 @@ def open_baseline(
 
     # verify-05: partition manifests consistent
     partition_bad = []
+    manifest_pairs = set(entries)
     for _digest, relative in entries:
         if not (relative.startswith("manifests/") and relative.endswith(".sha256")):
             continue
-        with open(os.path.join(root, relative.replace("/", os.sep)), "r", encoding="utf-8") as handle:
+        sub_path = os.path.join(root, relative.replace("/", os.sep))
+        if not verify_files and sha256_file(sub_path) != _digest:
+            raise BaselineError("verify-05", "partition manifest digest mismatch: %s" % relative)
+        with open(sub_path, "r", encoding="utf-8") as handle:
             sub_entries = _parse_manifest(handle.read(), relative)
         for entry_digest, entry_relative in sub_entries:
             target = os.path.join(root, entry_relative.replace("/", os.sep))
-            if not os.path.isfile(target) or sha256_file(target) != entry_digest:
+            if not os.path.isfile(target) or (sha256_file(target) != entry_digest if verify_files else
+                    (entry_digest, entry_relative) not in manifest_pairs):
                 partition_bad.append("%s :: %s" % (relative, entry_relative))
     if partition_bad:
         raise BaselineError("verify-05", "partition manifest inconsistencies: %s" % partition_bad[:10])
-    checks_passed.append("verify-05")
+    checks_passed.append("verify-05" if verify_files else "verify-05-manifest-consistency-only")
 
     # verify-06: every artifact classifiable by exactly one MD-05 rule
     class_bad = []
@@ -287,6 +311,10 @@ def open_baseline(
     record_path = os.path.join(root, RUN_RECORD)
     if not os.path.isfile(record_path):
         raise BaselineError("verify-07", "run record missing")
+    if not verify_files:
+        record_digest = next((digest for digest, relative in entries if relative == RUN_RECORD), None)
+        if record_digest is None or sha256_file(record_path) != record_digest:
+            raise BaselineError("verify-07", "run record digest mismatch")
     with open(record_path, "r", encoding="utf-8") as handle:
         run_record = json.load(handle)
     if spec is not None:
@@ -339,4 +367,5 @@ def open_baseline(
         run_record=run_record,
         total_bytes=total_bytes,
         checks_passed=tuple(checks_passed),
+        verify_on_access=not verify_files,
     )

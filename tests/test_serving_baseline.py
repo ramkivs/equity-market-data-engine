@@ -130,6 +130,20 @@ class ReadOnlyDisciplineTests(FixturePackageBase):
         self.assertTrue(report["identical"])
         self.assertEqual(before, self.package_digests())
 
+    def test_q1_q2_operations_leave_the_package_byte_identical(self):
+        before = self.package_digests()
+        handle = open_baseline(self.pkg, spec=self.spec)
+        from serving.index import build_index, write_index, load_index
+        from serving.query import query_date_range, query_dataset_summary
+
+        write_index(self.state, build_index(handle))
+        document = load_index(self.state, handle)[0]
+        query_dataset_summary(document)
+        query_dataset_summary(document, family="legacy13", year=2016)
+        rows = query_date_range(handle, document, "2016-01-04", "2017-02-06")
+        self.assertEqual(len(rows), 7)
+        self.assertEqual(before, self.package_digests())
+
 
 class M2PinIdentityTests(unittest.TestCase):
     """The pinned M2 spec (serving.baseline.DEFAULT_M2_SPEC) must be internally
