@@ -6,6 +6,7 @@ import sqlite3
 import unittest
 from unittest import mock
 
+from tests.sqlite_support import sqlite_connection
 from tests import test_b5_catalog_publication as catalog_tests
 from serving.incremental_publication import active_snapshot, publish, _sha
 from serving.incremental_registry import RegistryError, _json
@@ -46,7 +47,7 @@ class DetachedDeltaTests(unittest.TestCase):
         payload.pop('symbol_delta')
         payload['format'] = 'catalog-composite/1.0'
         text = _json(payload); generation = _sha(text)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             # Model a pre-v2 installation, preserving its accepted/staged rows.
             db.execute('DELETE FROM composite_generations')
             db.execute('DELETE FROM composite_blobs')
@@ -59,7 +60,7 @@ class DetachedDeltaTests(unittest.TestCase):
         pinned = active_snapshot(self.baseline, self.args[1], self.args[2])
         source, old_text = next(iter(pinned[0].payload['delta'].items()))
         old_candidate = pinned[0].payload['candidates'][0]
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT payload FROM composite_generations WHERE id=?', (first['generation'],)).fetchone()[0])
             self.assertNotIn('delta', payload)
             self.assertEqual(payload['reference_trees']['delta']['count'], 1)
@@ -76,7 +77,7 @@ class DetachedDeltaTests(unittest.TestCase):
         self.assertNotIn(old_candidate['rows_sha256'], [c.args[2] for c in put.call_args_list])
         self.assertNotIn(old_candidate['evidence_sha256'], [c.args[2] for c in put.call_args_list])
         self.assertEqual(pinned[0].payload['delta'][source], old_text)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertGreater(db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0], first_count)
             self.assertEqual(db.execute('SELECT content FROM composite_blobs WHERE digest=?', (old_candidate['rows_sha256'],)).fetchone()[0], old_text)
         self.assertNotEqual(first['generation'], second['generation'])
@@ -85,7 +86,7 @@ class DetachedDeltaTests(unittest.TestCase):
         self.init(); publish(*self.args)
         selected = active_snapshot(self.baseline, self.args[1], self.args[2])
         item = selected[0].payload['candidates'][0]
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('UPDATE composite_blobs SET content=? WHERE digest=?', ('damaged', item['rows_sha256']))
         self.assertGreater(execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])['summary']['row_count'], 0)
         with self.assertRaisesRegex(QueryError, 'blob.*digest mismatch'):
@@ -98,7 +99,7 @@ class DetachedDeltaTests(unittest.TestCase):
         self.init(); publish(*self.args)
         selected = active_snapshot(self.baseline, self.args[1], self.args[2])
         candidate = selected[0].payload['candidates'][0]
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('DELETE FROM composite_blobs WHERE digest=?', (candidate['evidence_sha256'],))
         with self.assertRaisesRegex(QueryError, 'blob.*missing'):
             execute_query_definition('Q9-archive-inventory', {}, self.baseline, self.args[2])
@@ -108,7 +109,7 @@ class DetachedDeltaTests(unittest.TestCase):
     def test_generation_reference_mismatch_fails_selected_access_and_binding(self):
         from serving.composite_binding import ensure_registry_binding
         self.init(); publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             text = db.execute('SELECT g.payload FROM composite_active a JOIN composite_generations g ON g.id=a.generation').fetchone()[0]
             payload = json.loads(text)
             from serving.persistent_index_map import ReferenceTree
@@ -131,7 +132,7 @@ class DetachedDeltaTests(unittest.TestCase):
         legacy_id = self.inline_legacy()
         old = active_snapshot(self.baseline, self.args[1], self.args[2])
         self.source.unlink(); self.next_delta()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute("CREATE TRIGGER fail_blob_switch BEFORE UPDATE ON composite_active BEGIN SELECT RAISE(ABORT,'injected'); END")
         original = type(self.baseline).path
         def blocked(obj, rel):
@@ -141,7 +142,7 @@ class DetachedDeltaTests(unittest.TestCase):
         with mock.patch.object(type(self.baseline), 'path', blocked):
             with self.assertRaises(RegistryError):
                 publish(*self.args)
-            with sqlite3.connect(self.dbpath()) as db:
+            with sqlite_connection(self.dbpath()) as db:
                 self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], legacy_id)
                 self.assertEqual(db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0], 0)
                 self.assertEqual(db.execute('SELECT count(*) FROM staged_candidates').fetchone()[0], 2)
@@ -156,7 +157,7 @@ class DetachedDeltaTests(unittest.TestCase):
 
     def test_inline_migration_with_no_pending_and_invalid_evidence(self):
         self.init(); publish(*self.args); legacy_id = self.inline_legacy(); self.source.unlink()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             text = db.execute('SELECT payload FROM composite_generations WHERE id=?', (legacy_id,)).fetchone()[0]
             data = json.loads(text); item = data['candidates'][0]
             data['delta']['incremental/' + item['digest'] + '.rows.jsonl'] = 'corrupt'
@@ -165,7 +166,7 @@ class DetachedDeltaTests(unittest.TestCase):
             db.execute('UPDATE composite_active SET generation=?', (bad_id,))
         with self.assertRaisesRegex(RegistryError, 'digest mismatch'):
             publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], bad_id)
             self.assertEqual(db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0], 0)
             db.execute('UPDATE composite_active SET generation=?', (legacy_id,))

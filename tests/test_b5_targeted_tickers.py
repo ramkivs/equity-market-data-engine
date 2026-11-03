@@ -8,6 +8,7 @@ import sqlite3
 import unittest
 from unittest import mock
 
+from tests.sqlite_support import sqlite_connection
 from tests import test_b5_catalog_publication as catalog_tests
 from serving.incremental_publication import active_snapshot, publish, _sha
 from serving.incremental_registry import RegistryError, _json
@@ -61,7 +62,7 @@ class TargetedTickerTests(unittest.TestCase):
 
     def test_corrupt_or_miskeyed_selected_group_fails_closed(self):
         self.init(); first = publish(*self.args)
-        with sqlite3.connect(self.proofpath()) as db:
+        with sqlite_connection(self.proofpath()) as db:
             db.execute("UPDATE rows SET ticker='MISSING' WHERE ticker='RELIANCE'")
         with self.assertRaisesRegex(QueryError, 'ticker lookup group observations mismatch'):
             execute_query_definition('Q3-instrument', {'symbol':'RELIANCE','series':'EQ'}, self.baseline, self.args[2])
@@ -75,7 +76,7 @@ class TargetedTickerTests(unittest.TestCase):
     def test_manifest_corruption_and_missing_file_do_not_silently_rebuild(self):
         self.init(); first = publish(*self.args)
         path = self.proofpath()
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             db.execute('UPDATE groups SET row_count=row_count+1 WHERE rowid=(SELECT min(rowid) FROM groups)')
         # The pinned tree remains authoritative for ordinary selected reads.
         self.assertGreater(execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])['summary']['row_count'], 0)
@@ -90,7 +91,7 @@ class TargetedTickerTests(unittest.TestCase):
         with self.assertRaisesRegex(RegistryError, 'proofs missing'):
             publish(*self.args)
         self.assertFalse(path.exists())
-        with sqlite3.connect(Path(self.args[1], 'source_registry.sqlite3')) as db:
+        with sqlite_connection(Path(self.args[1], 'source_registry.sqlite3')) as db:
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], first['generation'])
 
     def test_explicit_recovery_restores_only_matching_missing_proofs(self):
@@ -109,7 +110,7 @@ class TargetedTickerTests(unittest.TestCase):
         self.assertTrue(self.proofpath().is_file())
         self.assertEqual(active_snapshot(self.baseline, self.args[1], self.args[2])[0].manifest_digest, generation)
         # An existing corrupt proof file must never be overwritten by recovery.
-        with sqlite3.connect(self.proofpath()) as db:
+        with sqlite_connection(self.proofpath()) as db:
             db.execute('UPDATE groups SET row_count=row_count+1 WHERE rowid=(SELECT min(rowid) FROM groups)')
         before = self.proofpath().read_bytes()
         with self.assertRaises(CatalogError):
@@ -147,14 +148,14 @@ class TargetedTickerTests(unittest.TestCase):
         payload['format'] = 'catalog-composite/6.0'
         text = _json(payload); old = _sha(text)
         path = Path(self.args[1], 'source_registry.sqlite3')
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             db.execute('INSERT INTO composite_generations VALUES (?,?)', (old, text))
             db.execute('UPDATE composite_active SET generation=?', (old,))
             db.execute("CREATE TRIGGER block_ticker_proofs BEFORE UPDATE ON composite_active BEGIN SELECT RAISE(ABORT,'test'); END")
         self.source.unlink()
         with self.assertRaises(RegistryError):
             publish(*self.args)
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], old)
             db.execute('DROP TRIGGER block_ticker_proofs')
         result = publish(*self.args)

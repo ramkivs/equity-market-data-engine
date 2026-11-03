@@ -9,6 +9,7 @@ import sqlite3
 import unittest
 from unittest import mock
 
+from tests.sqlite_support import sqlite_connection
 from tests import test_b5_catalog_publication as catalog_tests
 from serving.composite_binding import ensure_registry_binding
 from serving.composite_blobs import schema
@@ -61,7 +62,7 @@ class IdentityTreePublicationTests(unittest.TestCase):
             p.pop(name)
         p['format'] = 'catalog-composite/12.0'
         text = _json(p); generation = _sha(text)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('INSERT INTO composite_generations VALUES (?,?)', (generation, text))
             db.execute('UPDATE composite_active SET generation=?', (generation,))
         return generation
@@ -87,7 +88,7 @@ class IdentityTreePublicationTests(unittest.TestCase):
         self.init(); first = publish(*self.args)
         selected = active_snapshot(self.baseline, self.args[1], self.args[2])
         root = selected[0].payload['identity_proof_tree']['root']
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('UPDATE composite_blobs SET content=? WHERE digest=?', ('broken', root))
         with self.assertRaisesRegex(QueryError, 'identity proof tree node corrupt'):
             execute_query_definition('Q5-association', {'security_id':'INE009A01021'}, self.baseline, self.args[2])
@@ -96,7 +97,7 @@ class IdentityTreePublicationTests(unittest.TestCase):
         self.next_delta()
         with self.assertRaisesRegex(RegistryError, 'identity proof tree node corrupt'):
             publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], first['generation'])
 
     def test_unrelated_node_is_deferred_but_explicit_binding_checks_all(self):
@@ -105,7 +106,7 @@ class IdentityTreePublicationTests(unittest.TestCase):
         selected = active_snapshot(self.baseline, self.args[1], self.args[2])
         root = selected[0].payload['identity_proof_tree']['root']
         target = ('b2', 'INE009A01021')
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             path = set(); digest = root
             while digest is not None:
                 path.add(digest)
@@ -129,7 +130,7 @@ class IdentityTreePublicationTests(unittest.TestCase):
 
     def test_malformed_proof_binding_fails_selection_and_publication(self):
         self.init(); publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             text = db.execute('SELECT g.payload FROM composite_active a JOIN composite_generations g ON g.id=a.generation').fetchone()[0]
             payload = json.loads(text); payload['identity_proof_tree']['count'] += 1
             text = _json(payload); digest = _sha(text)
@@ -144,7 +145,7 @@ class IdentityTreePublicationTests(unittest.TestCase):
         from serving.continuity_catalog import FILENAME
         self.init(); publish(*self.args)
         path = Path(self.args[2], FILENAME)
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             db.execute("UPDATE observations SET b2_identity='HIDDEN' WHERE ordinal=(SELECT min(ordinal) FROM observations WHERE b2_identity='INE009A01021')")
         with self.assertRaisesRegex(QueryError, 'group observations mismatch'):
             execute_query_definition('Q5-association', {'security_id':'INE009A01021'}, self.baseline, self.args[2])
@@ -157,7 +158,7 @@ class IdentityTreePublicationTests(unittest.TestCase):
         self.init(); result = publish(*self.args)
         selected = active_snapshot(self.baseline, self.args[1], self.args[2])
         root = selected[0].payload['identity_proof_tree']['root']
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             original = db.execute('SELECT content FROM composite_blobs WHERE digest=?', (root,)).fetchone()[0]
             db.execute('DELETE FROM composite_blobs WHERE digest=?', (root,))
         self.source.unlink()
@@ -170,19 +171,19 @@ class IdentityTreePublicationTests(unittest.TestCase):
             outcome = recover(self.baseline, self.args[2], self.args[1], self.args[3], self.args[4], self.args[5])
         self.assertEqual(outcome['generation'], result['generation'])
         self.assertGreater(execute_query_definition('Q5-association', {'security_id':'INE009A01021'}, self.baseline, self.args[2])['record_count'], 0)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertEqual(db.execute('SELECT content FROM composite_blobs WHERE digest=?', (root,)).fetchone()[0], original)
             db.execute('UPDATE composite_blobs SET content=? WHERE digest=?', ('corrupt', root))
         with self.assertRaisesRegex(ValueError, 'collision or corruption'):
             recover(self.baseline, self.args[2], self.args[1], self.args[3], self.args[4], self.args[5])
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertEqual(db.execute('SELECT content FROM composite_blobs WHERE digest=?', (root,)).fetchone()[0], 'corrupt')
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], result['generation'])
 
     def test_recovery_cli_uses_explicit_existing_registry(self):
         self.init(); result = publish(*self.args)
         root = active_snapshot(self.baseline, self.args[1], self.args[2])[0].payload['identity_proof_tree']['root']
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('DELETE FROM composite_blobs WHERE digest=?', (root,))
         env = dict(os.environ, PYTHONPATH=os.path.abspath('src'), PYTHONDONTWRITEBYTECODE='1')
         command = [sys.executable, '-m', 'serving.incremental_registry', '--package', str(self.pkg),
@@ -198,13 +199,13 @@ class IdentityTreePublicationTests(unittest.TestCase):
         from serving.identity_proof_tree import recover
         self.init(); result = publish(*self.args)
         root = active_snapshot(self.baseline, self.args[1], self.args[2])[0].payload['identity_proof_tree']['root']
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('DELETE FROM composite_blobs WHERE digest=?', (root,))
-        with sqlite3.connect(Path(self.args[2], FILENAME)) as db:
+        with sqlite_connection(Path(self.args[2], FILENAME)) as db:
             db.execute('UPDATE identity_groups SET row_count=row_count+1 WHERE rowid=(SELECT min(rowid) FROM identity_groups)')
         with self.assertRaisesRegex(ValueError, 'manifest mismatch'):
             recover(self.baseline, self.args[2], self.args[1], self.args[3], self.args[4], self.args[5])
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertIsNone(db.execute('SELECT content FROM composite_blobs WHERE digest=?', (root,)).fetchone())
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], result['generation'])
 
@@ -213,7 +214,7 @@ class IdentityTreePublicationTests(unittest.TestCase):
         pinned = active_snapshot(self.baseline, self.args[1], self.args[2])
         prior = execute_query_definition('Q5-association', {'security_id':'INE009A01021'}, self.baseline, self.args[2], composite=pinned)
         self.source.unlink(); self.next_delta()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             count = db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0]
             db.execute("CREATE TRIGGER stop_identity_tree BEFORE UPDATE ON composite_active BEGIN SELECT RAISE(ABORT,'test'); END")
         original = type(self.baseline).path
@@ -224,7 +225,7 @@ class IdentityTreePublicationTests(unittest.TestCase):
         with mock.patch.object(type(self.baseline), 'path', blocked):
             with self.assertRaises(RegistryError):
                 publish(*self.args)
-            with sqlite3.connect(self.dbpath()) as db:
+            with sqlite_connection(self.dbpath()) as db:
                 self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], old)
                 self.assertEqual(db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0], count)
                 db.execute('DROP TRIGGER stop_identity_tree')
@@ -237,14 +238,14 @@ class IdentityTreePublicationTests(unittest.TestCase):
         from serving.continuity_catalog import FILENAME
         self.init(); publish(*self.args); old = self.to_v12(); self.source.unlink()
         path = Path(self.args[2], FILENAME)
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             original = db.execute('SELECT row_count FROM identity_groups WHERE rowid=(SELECT min(rowid) FROM identity_groups)').fetchone()[0]
             db.execute('UPDATE identity_groups SET row_count=row_count+1 WHERE rowid=(SELECT min(rowid) FROM identity_groups)')
         with self.assertRaisesRegex(RegistryError, 'manifest mismatch'):
             publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], old)
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             db.execute('UPDATE identity_groups SET row_count=? WHERE rowid=(SELECT min(rowid) FROM identity_groups)', (original,))
         result = publish(*self.args)
         self.assertEqual(result['migrated_identity_proofs_generation'], old)

@@ -5,6 +5,7 @@ import sqlite3
 import unittest
 from unittest import mock
 
+from tests.sqlite_support import sqlite_connection
 from tests import test_b5_catalog_bootstrap as boot
 from serving.continuity_catalog import (CatalogError, FILENAME, FORMAT, LEGACY_FORMAT, open_catalog,
                                         observations_for_identity, upgrade_catalog, verify_catalog)
@@ -18,7 +19,7 @@ class CatalogProofTests(unittest.TestCase):
     def _legacy(self):
         self.build()
         path = Path(self.args[2], FILENAME)
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             db.execute('DROP TABLE identity_groups')
             db.execute("DELETE FROM meta WHERE key IN ('group_sha256','group_count')")
             db.execute('UPDATE meta SET value=? WHERE key=?', ('"' + LEGACY_FORMAT + '"', 'format'))
@@ -69,7 +70,7 @@ class CatalogProofTests(unittest.TestCase):
     def test_miskeyed_row_cannot_disappear_silently(self):
         self.build()
         path = Path(self.args[2], FILENAME)
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             db.execute("UPDATE observations SET w2_identity='HIDDEN' WHERE ordinal=(SELECT min(ordinal) FROM observations WHERE w2_identity='INE002A01018')")
         db, _ = open_catalog(self.baseline, self.args[2])
         try:
@@ -85,7 +86,7 @@ class CatalogProofTests(unittest.TestCase):
     def test_manifest_and_selected_projection_corruption_fail_closed(self):
         self.build()
         path = Path(self.args[2], FILENAME)
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             db.execute("UPDATE identity_groups SET row_count=row_count+1 WHERE kind='w2' AND identity='INE002A01018'")
         db, _ = open_catalog(self.baseline, self.args[2])
         try:
@@ -123,18 +124,18 @@ class CatalogProofTests(unittest.TestCase):
         with mock.patch.object(mod, '_create_groups', side_effect=fail):
             with self.assertRaisesRegex(RuntimeError, 'simulated interruption'):
                 upgrade_catalog(self.baseline, self.args[2])
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             self.assertIsNone(db.execute("SELECT name FROM sqlite_master WHERE name='identity_groups'").fetchone())
         self.assertEqual(verify_catalog(self.baseline, self.args[2])['format'], LEGACY_FORMAT)
         self.assertEqual(upgrade_catalog(self.baseline, self.args[2])['status'], 'UPGRADED')
 
     def test_legacy_corruption_is_not_upgraded_or_replaced(self):
         path = self._legacy()
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             db.execute("UPDATE observations SET raw_symbol='corrupted' WHERE ordinal=1")
         with self.assertRaises(CatalogError):
             upgrade_catalog(self.baseline, self.args[2])
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             self.assertIsNone(db.execute("SELECT name FROM sqlite_master WHERE name='identity_groups'").fetchone())
 
     def test_abrupt_process_exit_during_upgrade_rolls_back(self):
@@ -156,7 +157,7 @@ c.upgrade_catalog(base,sys.argv[2])
         proc = subprocess.run([sys.executable, '-c', code, str(self.pkg), self.args[2]], env=env,
                               capture_output=True, text=True, timeout=20)
         self.assertEqual(proc.returncode, 47, proc.stderr)
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             self.assertIsNone(db.execute("SELECT name FROM sqlite_master WHERE name='identity_groups'").fetchone())
         self.assertEqual(verify_catalog(self.baseline, self.args[2])['format'], LEGACY_FORMAT)
         self.assertEqual(upgrade_catalog(self.baseline, self.args[2])['status'], 'UPGRADED')
@@ -176,13 +177,13 @@ c.upgrade_catalog(base,sys.argv[2])
     def test_group_lookup_uses_one_pinned_sqlite_snapshot(self):
         self.build()
         path = Path(self.args[2], FILENAME)
-        with sqlite3.connect(path) as writer:
+        with sqlite_connection(path) as writer:
             self.assertEqual(writer.execute('PRAGMA journal_mode=WAL').fetchone()[0], 'wal')
         reader, _ = open_catalog(self.baseline, self.args[2])
         try:
             reader.execute('BEGIN')
             reader.execute('SELECT count(*) FROM identity_groups').fetchone()  # establish snapshot
-            with sqlite3.connect(path) as writer:
+            with sqlite_connection(path) as writer:
                 writer.execute("UPDATE identity_groups SET row_count=row_count+1 WHERE kind='w2' AND identity='INE002A01018'")
             self.assertGreater(len(list(observations_for_identity(reader, 'INE002A01018'))), 0)
             reader.rollback()

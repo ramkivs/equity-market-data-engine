@@ -9,6 +9,7 @@ import sys
 import unittest
 from unittest import mock
 
+from tests.sqlite_support import sqlite_connection
 from tests import test_b5_catalog_publication as catalog_tests
 from serving.composite_binding import ensure_registry_binding, read_binding
 from serving.incremental_publication import publish
@@ -24,7 +25,7 @@ class RegistryBindingTests(unittest.TestCase):
     next_delta = catalog_tests.CatalogPublicationTests.next_delta
 
     def snapshot_registry(self):
-        with sqlite3.connect(Path(self.args[1], 'source_registry.sqlite3')) as db:
+        with sqlite_connection(Path(self.args[1], 'source_registry.sqlite3')) as db:
             return {table: db.execute('SELECT * FROM ' + table + ' ORDER BY 1,2').fetchall()
                     for table in ('accepted', 'staged_candidates', 'conflicts', 'composite_generations', 'composite_active')}
 
@@ -79,7 +80,7 @@ class RegistryBindingTests(unittest.TestCase):
                '--history-state', self.args[4], '--legacy-root', self.args[5]['LEGACY'],
                '--udiff-root', self.args[5]['UDIFF'], 'bind']
         path = Path(self.args[1], 'source_registry.sqlite3')
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             text = db.execute("SELECT rows FROM staged_candidates WHERE file_name='later.zip'").fetchone()[0]
             db.execute("UPDATE staged_candidates SET rows='broken' WHERE file_name='later.zip'")
         failed = subprocess.run(cmd, env=env, text=True, capture_output=True, timeout=20)
@@ -90,7 +91,7 @@ class RegistryBindingTests(unittest.TestCase):
         self.assertNotEqual(damaged_repair.returncode, 0)
         self.assertIn('digest mismatch', json.loads(damaged_repair.stdout)['detail'])
         self.assertFalse(Path(self.args[2], 'composite_registry.json').exists())
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             db.execute("UPDATE staged_candidates SET rows=? WHERE file_name='later.zip'", (text,))
         repaired = subprocess.run(repair, env=env, text=True, capture_output=True, timeout=20)
         self.assertEqual(repaired.returncode, 0, repaired.stdout + repaired.stderr)
@@ -124,7 +125,7 @@ class RegistryBindingTests(unittest.TestCase):
         with self.assertRaisesRegex(QueryError, 'registry missing'):
             ensure_registry_binding(self.baseline, self.args[2], missing)
         self.assertFalse(Path(missing).exists())
-        with sqlite3.connect(Path(self.args[1], 'source_registry.sqlite3')) as db:
+        with sqlite_connection(Path(self.args[1], 'source_registry.sqlite3')) as db:
             db.execute('DELETE FROM accepted WHERE rowid=(SELECT min(rowid) FROM accepted)')
         with self.assertRaisesRegex(QueryError, 'baseline accepted records missing'):
             ensure_registry_binding(self.baseline, self.args[2], self.args[1])

@@ -13,6 +13,7 @@ from serving.incremental_drafts import _schema, create_draft, list_drafts
 from serving.incremental_registry import RegistryError, conflicts
 from serving.index import build_index, write_index, ServingIndexError
 from serving.saved import execute_query_definition
+from tests.sqlite_support import sqlite_connection
 from tests import test_incremental_staging as staging
 from tests import serving_fixtures as fixtures
 
@@ -27,7 +28,7 @@ class DraftTests(unittest.TestCase):
         return self.stage()['record']
 
     def db(self):
-        return sqlite3.connect(os.path.join(self.args[1], 'source_registry.sqlite3'))
+        return sqlite_connection(os.path.join(self.args[1], 'source_registry.sqlite3'))
 
     def test_snapshot_is_atomic_deterministic_and_does_not_read_baseline_rows(self):
         candidate = self.init()
@@ -112,7 +113,9 @@ d.create_draft(base, *args[1:])
         self.init()
         with self.db() as db:
             _schema(db)
-        reader = self.db()
+        # This test deliberately keeps a long-lived reader transaction open
+        # across the writer thread; close it explicitly in ``finally`` below.
+        reader = sqlite3.connect(os.path.join(self.args[1], 'source_registry.sqlite3'))
         ready, result = threading.Event(), []
         import serving.incremental_drafts as drafts
         real_schema = drafts._schema

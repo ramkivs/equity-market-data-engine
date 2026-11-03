@@ -7,6 +7,7 @@ import threading
 import unittest
 from unittest import mock
 
+from tests.sqlite_support import sqlite_connection
 from tests import test_incremental_staging as staging
 from tests import serving_fixtures as fixtures
 from serving.continuity_catalog import bootstrap, FILENAME
@@ -107,13 +108,13 @@ class CatalogPublicationTests(unittest.TestCase):
         self.init()
         path = os.path.join(self.args[1], 'source_registry.sqlite3')
         from serving.incremental_publication import _schema
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             _schema(db)
             db.execute("CREATE TRIGGER block BEFORE INSERT ON composite_active BEGIN SELECT RAISE(ABORT,'failure'); END")
         with self.assertRaises(RegistryError):
             publish(*self.args)
         self.assertIsNone(active_snapshot(self.baseline, self.args[1], self.args[2]))
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             self.assertEqual(db.execute('SELECT count(*) FROM composite_generations').fetchone()[0], 0)
             db.execute('DROP TRIGGER block')
         publish(*self.args)
@@ -127,13 +128,13 @@ class CatalogPublicationTests(unittest.TestCase):
         self.init(); first = publish(*self.args)
         self.next_delta()
         path = os.path.join(self.args[1], 'source_registry.sqlite3')
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             db.execute("CREATE TRIGGER block_switch BEFORE UPDATE ON composite_active BEGIN SELECT RAISE(ABORT,'failure'); END")
         with self.assertRaises(RegistryError):
             publish(*self.args)
         selected, _ = active_snapshot(self.baseline, self.args[1], self.args[2])
         self.assertEqual(selected.manifest_digest, first['generation'])
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             self.assertEqual(db.execute('SELECT count(*) FROM composite_generations').fetchone()[0], 1)
             self.assertEqual(db.execute('SELECT count(*) FROM accepted').fetchone()[0], fixtures.EXPECTED_MEMBERS + 1)
             db.execute('DROP TRIGGER block_switch')
@@ -141,7 +142,7 @@ class CatalogPublicationTests(unittest.TestCase):
 
     def test_corrupt_catalog_key_fails_closed_before_publication(self):
         self.init()
-        with sqlite3.connect(os.path.join(self.args[2], FILENAME)) as db:
+        with sqlite_connection(os.path.join(self.args[2], FILENAME)) as db:
             db.execute("UPDATE observations SET w2_identity='HIDDEN' WHERE ordinal=(SELECT min(ordinal) FROM observations WHERE w2_identity='INE002A01018')")
         with self.assertRaises(RegistryError):
             publish(*self.args)
@@ -184,12 +185,12 @@ class CatalogPublicationTests(unittest.TestCase):
         self.init()
         path = os.path.join(self.args[1], 'source_registry.sqlite3')
         from serving.incremental_publication import _schema
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             _schema(db)
             db.execute("INSERT INTO composite_active VALUES (1,'missing')")
         with self.assertRaisesRegex(RegistryError, 'pointer'):
             publish(*self.args)
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], 'missing')
             self.assertEqual(db.execute('SELECT count(*) FROM staged_candidates').fetchone()[0], 1)
 
@@ -282,7 +283,7 @@ raise SystemExit(main(sys.argv[2:]))
         from serving.incremental_publication import _schema
         self.init()
         path = os.path.join(self.args[1], 'source_registry.sqlite3')
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             _schema(db)
             db.execute("CREATE TRIGGER abrupt_catalog BEFORE INSERT ON composite_active BEGIN SELECT exit_now(); END")
         code = r"""
@@ -306,7 +307,7 @@ cp.publish(base,*args)
         proc = subprocess.run([sys.executable, '-c', code, str(self.pkg), json.dumps(self.args[1:])], env=env,
                               capture_output=True, text=True, timeout=20)
         self.assertEqual(proc.returncode, 47, proc.stderr)
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             self.assertEqual(db.execute('SELECT count(*) FROM composite_generations').fetchone()[0], 0)
             self.assertEqual(db.execute('SELECT count(*) FROM composite_active').fetchone()[0], 0)
             self.assertEqual(db.execute('SELECT count(*) FROM accepted').fetchone()[0], fixtures.EXPECTED_MEMBERS)
@@ -328,13 +329,13 @@ cp.publish(base,*args)
                 raise AssertionError('migration reread historical canonical rows')
             return original(obj, rel)
         path = os.path.join(self.args[1], 'source_registry.sqlite3')
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             db.execute("CREATE TRIGGER block_migration BEFORE UPDATE ON composite_active BEGIN SELECT RAISE(ABORT,'failure'); END")
         with mock.patch.object(type(self.baseline), 'path', blocked):
             with self.assertRaises(RegistryError):
                 publish(*self.args)
             self.assertEqual(active_snapshot(self.baseline, self.args[1], self.args[2])[0].manifest_digest, old['generation'])
-            with sqlite3.connect(path) as db:
+            with sqlite_connection(path) as db:
                 self.assertEqual(db.execute('SELECT count(*) FROM composite_generations').fetchone()[0], 1)
                 self.assertEqual(db.execute('SELECT count(*) FROM staged_candidates').fetchone()[0], 2)
                 db.execute('DROP TRIGGER block_migration')
@@ -369,13 +370,13 @@ cp.publish(base,*args)
         self.stage(); old = publish(*self.args)
         bootstrap(self.baseline, self.args[2], self.args[1], self.args[3], self.args[4], self.args[5])
         path = os.path.join(self.args[1], 'source_registry.sqlite3')
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             record = db.execute("SELECT record FROM accepted WHERE file_name='new.zip'").fetchone()[0]
             damaged = json.loads(record); damaged['rows_sha256'] = '0' * 64
             db.execute("UPDATE accepted SET record=? WHERE file_name='new.zip'", (json.dumps(damaged),))
         with self.assertRaisesRegex(RegistryError, 'accepted input mismatch'):
             publish(*self.args)
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], old['generation'])
             self.assertEqual(db.execute('SELECT count(*) FROM composite_generations').fetchone()[0], 1)
             self.assertEqual(db.execute('SELECT count(*) FROM staged_candidates').fetchone()[0], 1)

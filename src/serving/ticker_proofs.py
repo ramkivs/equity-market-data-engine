@@ -10,6 +10,7 @@ import sqlite3
 import tempfile
 from urllib.parse import quote
 
+from .atomic import sync_file
 from .continuity_catalog import CatalogError, _metadata, ticker_catalog, _feed
 from .query import QueryError
 from .incremental_registry import _json
@@ -76,8 +77,7 @@ def build(baseline, state, catalog_db, catalog_meta, expected=None):
             db.commit()
         finally:
             db.close()
-        with open(temp, 'rb') as stream:
-            os.fsync(stream.fileno())
+        sync_file(temp)
         try:
             os.link(temp, path)
         except FileExistsError:

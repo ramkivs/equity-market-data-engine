@@ -11,6 +11,7 @@ import unittest
 from unittest import mock
 import urllib.request
 
+from tests.sqlite_support import sqlite_connection
 from tests import serving_fixtures as fixtures
 from tests import test_incremental_staging as staging
 from tests import test_b5_catalog_publication as catalog_tests
@@ -68,14 +69,14 @@ class B5LifecycleTests(unittest.TestCase):
                 outcome = prepare(*self.args, 'LEGACY', changed.name, '2016-01-04', 'd21-lifecycle')
                 self.assertEqual(outcome['status'], 'CHANGED-CONFLICT-UNRESOLVED')
             if number == 2:
-                with sqlite3.connect(dbpath) as db:
+                with sqlite_connection(dbpath) as db:
                     accepted_before = db.execute('SELECT count(*) FROM accepted').fetchone()[0]
                     blobs_before = db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0]
                     db.execute("CREATE TRIGGER fail_lifecycle BEFORE UPDATE ON composite_active BEGIN SELECT RAISE(ABORT,'interruption'); END")
                 with mock.patch.object(type(self.baseline), 'path', blocked):
                     with self.assertRaises(RegistryError):
                         publish(*self.args)
-                with sqlite3.connect(dbpath) as db:
+                with sqlite_connection(dbpath) as db:
                     self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], generation)
                     self.assertEqual(db.execute('SELECT count(*) FROM accepted').fetchone()[0], accepted_before)
                     self.assertEqual(db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0], blobs_before)

@@ -5,6 +5,7 @@ import sqlite3
 import unittest
 from unittest import mock
 
+from tests.sqlite_support import sqlite_connection
 from tests import test_b5_catalog_publication as catalog_tests
 from serving.composite_blobs import schema
 from serving.incremental_publication import active_snapshot, publish, _sha
@@ -82,7 +83,7 @@ class PersistentIndexPublicationTests(unittest.TestCase):
         old = active_snapshot(self.baseline, self.args[1], self.args[2])
         old_index = old[1]
         root = old[0].payload['index_tree']['root']
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT payload FROM composite_generations WHERE id=?', (first['generation'],)).fetchone()[0])
             self.assertNotIn('index_delta', payload)
             self.assertEqual(payload['index_tree']['root'], root)
@@ -111,14 +112,14 @@ class PersistentIndexPublicationTests(unittest.TestCase):
         self.init(); result = publish(*self.args)
         selected = active_snapshot(self.baseline, self.args[1], self.args[2])
         root = selected[0].payload['index_tree']['root']
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('UPDATE composite_blobs SET content=? WHERE digest=?', ('broken', root))
         with self.assertRaisesRegex(QueryError, 'index tree node corrupt'):
             execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])
         self.next_delta()
         with self.assertRaisesRegex(RegistryError, 'index tree node corrupt'):
             publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], result['generation'])
             self.assertEqual(db.execute('SELECT count(*) FROM staged_candidates').fetchone()[0], 2)
 
@@ -138,7 +139,7 @@ class PersistentIndexPublicationTests(unittest.TestCase):
         payload.pop('index_tree'); payload.pop('index'); payload.pop('symbol_catalog')
         payload['format'] = 'catalog-composite/7.0'
         text = _json(payload); old_id = _sha(text)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('INSERT INTO composite_generations VALUES (?,?)', (old_id, text))
             db.execute('UPDATE composite_active SET generation=?', (old_id,))
             db.execute("CREATE TRIGGER block_tree_switch BEFORE UPDATE ON composite_active BEGIN SELECT RAISE(ABORT,'test'); END")
@@ -152,7 +153,7 @@ class PersistentIndexPublicationTests(unittest.TestCase):
         with mock.patch.object(type(self.baseline), 'path', blocked):
             with self.assertRaises(RegistryError):
                 publish(*self.args)
-            with sqlite3.connect(self.dbpath()) as db:
+            with sqlite_connection(self.dbpath()) as db:
                 self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], old_id)
                 db.execute('DROP TRIGGER block_tree_switch')
             result = publish(*self.args)
@@ -176,7 +177,7 @@ class PersistentIndexPublicationTests(unittest.TestCase):
         payload.pop('index_tree'); payload.pop('index'); payload.pop('symbol_catalog')
         payload['format'] = 'catalog-composite/7.0'
         text = _json(payload); old_id = _sha(text)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('INSERT INTO composite_generations VALUES (?,?)', (old_id, text))
             db.execute('UPDATE composite_active SET generation=?', (old_id,))
         before = active_snapshot(self.baseline, self.args[1], self.args[2])[1]

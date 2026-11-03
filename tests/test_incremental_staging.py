@@ -8,6 +8,7 @@ import unittest
 from unittest import mock
 import zipfile
 
+from tests.sqlite_support import sqlite_connection
 from serving.baseline import open_baseline
 from serving.incremental_registry import RegistryError, bindings, conflicts, initialize
 from serving.incremental_staging import list_staged, prepare
@@ -98,14 +99,14 @@ class StagingTests(unittest.TestCase):
     def test_interrupted_write_rolls_back_and_retry_succeeds(self):
         path = os.path.join(self.args[1], 'source_registry.sqlite3')
         # A trigger simulates a publication failure at the INSERT boundary.
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             from serving.incremental_staging import _schema
             _schema(db)
             db.execute("CREATE TRIGGER fail_insert BEFORE INSERT ON staged_candidates BEGIN SELECT RAISE(ABORT, 'simulated failure'); END")
         with self.assertRaises(RegistryError):
             self.stage()
         self.assertEqual(list_staged(*self.args), [])
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             db.execute('DROP TRIGGER fail_insert')
         self.assertEqual(self.stage()['status'], 'VALIDATED-STAGED-NOT-PUBLISHED')
 

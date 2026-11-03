@@ -5,6 +5,7 @@ import sqlite3
 import unittest
 from unittest import mock
 
+from tests.sqlite_support import sqlite_connection
 from tests import test_b5_catalog_publication as catalog_tests
 from serving.incremental_publication import active_snapshot, publish, _sha
 from serving.incremental_registry import RegistryError, _json
@@ -44,7 +45,7 @@ class DetachedOverrideTests(unittest.TestCase):
         payload.pop('symbol_delta')
         payload['format'] = 'catalog-composite/3.0'
         text = _json(payload); generation = _sha(text)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('DELETE FROM composite_generations')
             db.execute('INSERT INTO composite_generations VALUES (?,?)', (generation, text))
             db.execute('UPDATE composite_active SET generation=?', (generation,))
@@ -57,7 +58,7 @@ class DetachedOverrideTests(unittest.TestCase):
         overrides = old[0].payload['w2_overrides']
         unaffected = 'INE000000006'
         ref = overrides.references[unaffected]; value = overrides[unaffected]
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT payload FROM composite_generations WHERE id=?', (first['generation'],)).fetchone()[0])
             self.assertNotIn('w2_overrides', payload)
             self.assertGreater(payload['derived_trees']['w2_overrides']['count'], 0)
@@ -76,7 +77,7 @@ class DetachedOverrideTests(unittest.TestCase):
         self.init(); publish(*self.args)
         selected = active_snapshot(self.baseline, self.args[1], self.args[2])[0]
         digest = selected.payload['w2_overrides'].references['INE002A01018']
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('UPDATE composite_blobs SET content=? WHERE digest=?', ('broken', digest))
         with self.assertRaisesRegex(QueryError, 'blob.*digest mismatch'):
             execute_query_definition('Q5-association', {'security_id':'INE002A01018'}, self.baseline, self.args[2])
@@ -90,7 +91,7 @@ class DetachedOverrideTests(unittest.TestCase):
         params = {'security_id':'INE002A01018'}
         before = execute_query_definition('Q5-association', params, self.baseline, self.args[2], composite=old)
         self.source.unlink(); self.next_delta()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             count = db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0]
             db.execute("CREATE TRIGGER fail_override_switch BEFORE UPDATE ON composite_active BEGIN SELECT RAISE(ABORT,'failure'); END")
         path = type(self.baseline).path
@@ -101,7 +102,7 @@ class DetachedOverrideTests(unittest.TestCase):
         with mock.patch.object(type(self.baseline), 'path', blocked):
             with self.assertRaises(RegistryError):
                 publish(*self.args)
-            with sqlite3.connect(self.dbpath()) as db:
+            with sqlite_connection(self.dbpath()) as db:
                 self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], old_id)
                 self.assertEqual(db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0], count)
                 db.execute('DROP TRIGGER fail_override_switch')
@@ -113,7 +114,7 @@ class DetachedOverrideTests(unittest.TestCase):
 
     def test_v3_migration_without_pending_and_invalid_override(self):
         self.init(); publish(*self.args); old_id = self.to_v3(); self.source.unlink()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT payload FROM composite_generations WHERE id=?', (old_id,)).fetchone()[0])
             payload['b3_overrides']['INE002A01018'][0]['security_id'] = 'WRONG'
             text = _json(payload); bad_id = _sha(text)
@@ -121,7 +122,7 @@ class DetachedOverrideTests(unittest.TestCase):
             db.execute('UPDATE composite_active SET generation=?', (bad_id,))
         with self.assertRaisesRegex(RegistryError, 'override identity mismatch'):
             publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], bad_id)
             db.execute('UPDATE composite_active SET generation=?', (old_id,))
         result = publish(*self.args)

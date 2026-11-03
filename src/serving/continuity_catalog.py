@@ -13,6 +13,7 @@ import tempfile
 from urllib.parse import quote
 
 from nse_engine.compact import normalize_upper_trim
+from .atomic import sync_file
 from .index import load_index
 from .incremental_registry import _db_path, _open
 from .paths import validate_roots, validate_store_root
@@ -403,8 +404,7 @@ def bootstrap(baseline, state, registry, saved, history, source_roots):
             db.commit()
         finally:
             db.close()
-        with open(temporary, 'rb') as handle:
-            os.fsync(handle.fileno())
+        sync_file(temporary)
         # Atomic no-replace publication. Unlike os.replace this never overwrites
         # an existing catalog, even if two bootstraps race.
         try:

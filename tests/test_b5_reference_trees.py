@@ -5,6 +5,7 @@ import sqlite3
 import unittest
 from unittest import mock
 
+from tests.sqlite_support import sqlite_connection
 from tests import test_b5_catalog_publication as catalog_tests
 from serving.incremental_publication import active_snapshot, publish, _sha
 from serving.incremental_registry import RegistryError, _json
@@ -36,7 +37,7 @@ class ReferenceTreePublicationTests(unittest.TestCase):
         payload.pop('reference_trees'); payload.pop('index_delta'); payload.pop('index'); payload.pop('symbol_catalog')
         payload['format'] = 'catalog-composite/8.0'
         text = _json(payload); generation = _sha(text)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('INSERT INTO composite_generations VALUES (?,?)', (generation, text))
             db.execute('UPDATE composite_active SET generation=?', (generation,))
         return generation
@@ -45,7 +46,7 @@ class ReferenceTreePublicationTests(unittest.TestCase):
         self.init(); first = publish(*self.args)
         pinned = active_snapshot(self.baseline, self.args[1], self.args[2])
         source, rows = next(iter(pinned[0].payload['delta'].items()))
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             stored = json.loads(db.execute('SELECT payload FROM composite_generations WHERE id=?', (first['generation'],)).fetchone()[0])
         self.assertNotIn('delta', stored); self.assertNotIn('evidence', stored)
         self.assertEqual(stored['reference_trees']['delta']['count'], 1)
@@ -68,7 +69,7 @@ class ReferenceTreePublicationTests(unittest.TestCase):
                 self.init(); result = publish(*self.args)
                 selected = active_snapshot(self.baseline, self.args[1], self.args[2])
                 root = selected[0].payload['reference_trees'][name]['root']
-                with sqlite3.connect(self.dbpath()) as db:
+                with sqlite_connection(self.dbpath()) as db:
                     db.execute('UPDATE composite_blobs SET content=? WHERE digest=?', ('broken', root))
                 execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])
                 digest = selected[0].payload['candidates'][0]['digest']
@@ -81,7 +82,7 @@ class ReferenceTreePublicationTests(unittest.TestCase):
                 self.next_delta()
                 with self.assertRaisesRegex(RegistryError, 'tree node corrupt'):
                     publish(*self.args)
-                with sqlite3.connect(self.dbpath()) as db:
+                with sqlite_connection(self.dbpath()) as db:
                     self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], result['generation'])
                     self.assertEqual(db.execute('SELECT count(*) FROM staged_candidates').fetchone()[0], 2)
 
@@ -92,7 +93,7 @@ class ReferenceTreePublicationTests(unittest.TestCase):
         selected = active_snapshot(self.baseline, self.args[1], self.args[2])[0]
         digest = selected.payload['candidates'][0]['digest']
         source = 'incremental/' + digest + '.rows.jsonl'
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             text = db.execute('SELECT g.payload FROM composite_active a JOIN composite_generations g ON g.id=a.generation').fetchone()[0]
             payload = json.loads(text)
             payload['reference_trees']['delta']['root'] = insert(db, None, source, {'digest':'a' * 64})
@@ -120,7 +121,7 @@ class ReferenceTreePublicationTests(unittest.TestCase):
 
     def test_missing_blob_table_reports_unavailable_not_sqlite_error(self):
         self.init(); publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('ALTER TABLE composite_blobs RENAME TO damaged_composite_blobs')
         with self.assertRaisesRegex(QueryError, 'candidate tree invalid'):
             execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])
@@ -130,7 +131,7 @@ class ReferenceTreePublicationTests(unittest.TestCase):
         pinned = active_snapshot(self.baseline, self.args[1], self.args[2])
         source, rows = next(iter(pinned[0].payload['delta'].items()))
         self.source.unlink(); self.next_delta()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             count = db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0]
             db.execute("CREATE TRIGGER block_references BEFORE UPDATE ON composite_active BEGIN SELECT RAISE(ABORT,'test'); END")
         original = type(self.baseline).path
@@ -141,7 +142,7 @@ class ReferenceTreePublicationTests(unittest.TestCase):
         with mock.patch.object(type(self.baseline), 'path', blocked):
             with self.assertRaises(RegistryError):
                 publish(*self.args)
-            with sqlite3.connect(self.dbpath()) as db:
+            with sqlite_connection(self.dbpath()) as db:
                 self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], old_id)
                 self.assertEqual(db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0], count)
                 db.execute('DROP TRIGGER block_references')

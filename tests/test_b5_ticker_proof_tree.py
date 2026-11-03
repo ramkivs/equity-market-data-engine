@@ -9,6 +9,7 @@ import sys
 import unittest
 from unittest import mock
 
+from tests.sqlite_support import sqlite_connection
 from tests import test_b5_catalog_publication as catalog_tests
 from serving.composite_blobs import schema
 from serving.composite_binding import ensure_registry_binding
@@ -79,7 +80,7 @@ class TickerProofTreePublicationTests(unittest.TestCase):
             payload.pop(name)
         payload['format'] = 'catalog-composite/13.0'
         text = _json(payload); generation = _sha(text)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('INSERT INTO composite_generations VALUES (?,?)', (generation, text))
             db.execute('UPDATE composite_active SET generation=?', (generation,))
         return generation
@@ -106,7 +107,7 @@ class TickerProofTreePublicationTests(unittest.TestCase):
     def test_selected_tree_corruption_fails_closed_and_pointer_unchanged(self):
         self.init(); result = publish(*self.args)
         root = active_snapshot(self.baseline, self.args[1], self.args[2])[0].payload['ticker_proof_tree']['root']
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('UPDATE composite_blobs SET content=? WHERE digest=?', ('corrupt', root))
         with self.assertRaisesRegex(QueryError, 'ticker proof tree node corrupt'):
             execute_query_definition('Q4-filter', {'filters': {'symbol':'RELIANCE'}}, self.baseline, self.args[2])
@@ -115,7 +116,7 @@ class TickerProofTreePublicationTests(unittest.TestCase):
         self.next_delta()
         with self.assertRaisesRegex(RegistryError, 'ticker proof tree node corrupt'):
             publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], result['generation'])
 
     def test_v13_migration_is_atomic_and_preserves_pinned_reader(self):
@@ -123,7 +124,7 @@ class TickerProofTreePublicationTests(unittest.TestCase):
         old = active_snapshot(self.baseline, self.args[1], self.args[2])
         before = execute_query_definition('Q4-filter', {'filters': {'symbol':'RELIANCE'}}, self.baseline, self.args[2], composite=old)
         self.source.unlink(); self.next_delta()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             count = db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0]
             db.execute("CREATE TRIGGER stop_ticker_proof BEFORE UPDATE ON composite_active BEGIN SELECT RAISE(ABORT,'test'); END")
         original = type(self.baseline).path
@@ -134,7 +135,7 @@ class TickerProofTreePublicationTests(unittest.TestCase):
         with mock.patch.object(type(self.baseline), 'path', blocked):
             with self.assertRaises(RegistryError):
                 publish(*self.args)
-            with sqlite3.connect(self.dbpath()) as db:
+            with sqlite_connection(self.dbpath()) as db:
                 self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], old_generation)
                 self.assertEqual(db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0], count)
                 db.execute('DROP TRIGGER stop_ticker_proof')
@@ -147,14 +148,14 @@ class TickerProofTreePublicationTests(unittest.TestCase):
         from serving.ticker_proofs import FILE
         self.init(); publish(*self.args); old = self.to_v13(); self.source.unlink()
         proofpath = Path(self.args[2], FILE)
-        with sqlite3.connect(proofpath) as db:
+        with sqlite_connection(proofpath) as db:
             value = db.execute('SELECT row_count FROM groups WHERE rowid=(SELECT min(rowid) FROM groups)').fetchone()[0]
             db.execute('UPDATE groups SET row_count=row_count+1 WHERE rowid=(SELECT min(rowid) FROM groups)')
         with self.assertRaisesRegex(ValueError, 'group manifest mismatch'):
             publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], old)
-        with sqlite3.connect(proofpath) as db:
+        with sqlite_connection(proofpath) as db:
             db.execute('UPDATE groups SET row_count=? WHERE rowid=(SELECT min(rowid) FROM groups)', (value,))
         result = publish(*self.args)
         self.assertEqual(result['migrated_ticker_proof_tree_generation'], old)
@@ -164,7 +165,7 @@ class TickerProofTreePublicationTests(unittest.TestCase):
     def test_explicit_recovery_restores_only_missing_matching_nodes(self):
         self.init(); result = publish(*self.args)
         root = active_snapshot(self.baseline, self.args[1], self.args[2])[0].payload['ticker_proof_tree']['root']
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             original = db.execute('SELECT content FROM composite_blobs WHERE digest=?', (root,)).fetchone()[0]
             db.execute('DELETE FROM composite_blobs WHERE digest=?', (root,))
         self.source.unlink()
@@ -176,12 +177,12 @@ class TickerProofTreePublicationTests(unittest.TestCase):
         with mock.patch.object(type(self.baseline), 'path', blocked):
             outcome = recover(self.baseline, self.args[2], self.args[1], self.args[3], self.args[4], self.args[5])
         self.assertEqual(outcome['generation'], result['generation'])
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertEqual(db.execute('SELECT content FROM composite_blobs WHERE digest=?', (root,)).fetchone()[0], original)
             db.execute('UPDATE composite_blobs SET content=? WHERE digest=?', ('corrupt', root))
         with self.assertRaisesRegex(ValueError, 'collision or corruption'):
             recover(self.baseline, self.args[2], self.args[1], self.args[3], self.args[4], self.args[5])
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertEqual(db.execute('SELECT content FROM composite_blobs WHERE digest=?', (root,)).fetchone()[0], 'corrupt')
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], result['generation'])
 
@@ -189,19 +190,19 @@ class TickerProofTreePublicationTests(unittest.TestCase):
         from serving.ticker_proofs import FILE
         self.init(); result = publish(*self.args)
         root = active_snapshot(self.baseline, self.args[1], self.args[2])[0].payload['ticker_proof_tree']['root']
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('DELETE FROM composite_blobs WHERE digest=?', (root,))
-        with sqlite3.connect(Path(self.args[2], FILE)) as db:
+        with sqlite_connection(Path(self.args[2], FILE)) as db:
             db.execute('UPDATE groups SET row_count=row_count+1 WHERE rowid=(SELECT min(rowid) FROM groups)')
         with self.assertRaisesRegex(ValueError, 'group manifest mismatch'):
             recover(self.baseline, self.args[2], self.args[1], self.args[3], self.args[4], self.args[5])
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertIsNone(db.execute('SELECT content FROM composite_blobs WHERE digest=?', (root,)).fetchone())
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], result['generation'])
 
     def test_malformed_binding_rejected_at_selection_and_publication(self):
         self.init(); publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             text = db.execute('SELECT g.payload FROM composite_active a JOIN composite_generations g ON g.id=a.generation').fetchone()[0]
             payload = json.loads(text); payload['ticker_proof_tree']['count'] += 1
             text = _json(payload); generation = _sha(text)
@@ -215,7 +216,7 @@ class TickerProofTreePublicationTests(unittest.TestCase):
     def test_recovery_cli_for_missing_tree_node(self):
         self.init(); result = publish(*self.args)
         root = active_snapshot(self.baseline, self.args[1], self.args[2])[0].payload['ticker_proof_tree']['root']
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('DELETE FROM composite_blobs WHERE digest=?', (root,))
         env = dict(os.environ, PYTHONPATH=os.path.abspath('src'), PYTHONDONTWRITEBYTECODE='1')
         command = [sys.executable, '-m', 'serving.incremental_registry', '--package', str(self.pkg),

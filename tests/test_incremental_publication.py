@@ -4,6 +4,7 @@ import os
 import sqlite3
 import unittest
 from unittest import mock
+from tests.sqlite_support import sqlite_connection
 from tests import test_incremental_staging as staging
 from tests import serving_fixtures as fixtures
 from serving.incremental_publication import publish, active_snapshot
@@ -119,12 +120,12 @@ class PublicationTests(unittest.TestCase):
         self.init()
         dbpath = os.path.join(self.args[1], 'source_registry.sqlite3')
         from serving.incremental_publication import _schema
-        with sqlite3.connect(dbpath) as db:
+        with sqlite_connection(dbpath) as db:
             _schema(db)
             db.execute("CREATE TRIGGER fail_active BEFORE INSERT ON composite_active BEGIN SELECT RAISE(ABORT, 'interrupted'); END")
         with self.assertRaises(RegistryError):
             publish(*self.args)
-        with sqlite3.connect(dbpath) as db:
+        with sqlite_connection(dbpath) as db:
             self.assertEqual(db.execute('SELECT count(*) FROM composite_generations').fetchone()[0], 0)
             self.assertEqual(db.execute('SELECT count(*) FROM accepted').fetchone()[0], fixtures.EXPECTED_MEMBERS)
             db.execute('DROP TRIGGER fail_active')
@@ -178,7 +179,7 @@ class PublicationTests(unittest.TestCase):
         from serving.incremental_publication import _schema
         self.init()
         path = os.path.join(self.args[1], 'source_registry.sqlite3')
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             _schema(db)
             db.execute("CREATE TRIGGER abrupt BEFORE INSERT ON composite_active BEGIN SELECT exit_now(); END")
         code = r'''
@@ -200,7 +201,7 @@ pub.publish(base,*a[1:])
         env = dict(os.environ, PYTHONPATH=os.path.abspath('src'), PYTHONDONTWRITEBYTECODE='1')
         proc = subprocess.run([sys.executable, '-c', code, json.dumps([str(self.pkg), *self.args[1:]])], env=env, capture_output=True, text=True, timeout=20)
         self.assertEqual(proc.returncode, 47, proc.stderr)
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             self.assertEqual(db.execute('SELECT count(*) FROM composite_generations').fetchone()[0], 0)
             self.assertEqual(db.execute('SELECT count(*) FROM composite_active').fetchone()[0], 0)
             self.assertEqual(db.execute('SELECT count(*) FROM accepted').fetchone()[0], fixtures.EXPECTED_MEMBERS)
@@ -233,7 +234,7 @@ pub.publish(base,*a[1:])
         api = UiApi(self.baseline, self.args[2], self.args[3], self.args[4], registry_root=self.args[1])
         out = api.saved_run('ticker')['query']
         self.assertTrue(any(row['business_date'] == '2016-01-06' for row in out['rows']))
-        with sqlite3.connect(os.path.join(self.args[1], 'source_registry.sqlite3')) as db:
+        with sqlite_connection(os.path.join(self.args[1], 'source_registry.sqlite3')) as db:
             db.execute("UPDATE composite_generations SET payload=payload || 'tampered'")
         status, document = api.dispatch('POST', '/api/query', {'mode':'Q1-dataset', 'params':{}})
         self.assertNotEqual(status, 200)
@@ -248,12 +249,12 @@ pub.publish(base,*a[1:])
         Path(self.args[-1]['UDIFF'], 'next.zip').write_bytes(archive_bytes('next.csv', data))
         prepare(*self.args, 'UDIFF', 'next.zip', '2025-03-06', 'next')
         path = os.path.join(self.args[1], 'source_registry.sqlite3')
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             db.execute("CREATE TRIGGER block_switch BEFORE UPDATE ON composite_active BEGIN SELECT RAISE(ABORT, 'interrupted'); END")
         with self.assertRaises(RegistryError):
             publish(*self.args)
         self.assertEqual(active_snapshot(self.baseline, self.args[1], self.args[2])[0].manifest_digest, first['generation'])
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             self.assertEqual(db.execute('SELECT count(*) FROM composite_generations').fetchone()[0], 1)
             self.assertEqual(db.execute('SELECT count(*) FROM accepted').fetchone()[0], fixtures.EXPECTED_MEMBERS + 1)
             db.execute('DROP TRIGGER block_switch')
