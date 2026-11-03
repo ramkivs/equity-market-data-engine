@@ -54,7 +54,7 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
 
 ## Scope limits — no B5 completion claim
 
-* Catalog-backed generation format 4 stores incremental canonical rows and
+* Catalog-backed generation format 5 stores incremental canonical rows and
   evidence once as content-addressed SQLite blobs. Later publications refer to
   existing blobs without reading or copying their contents. Readers verify each
   accessed blob against its generation-pinned digest; old blobs remain available
@@ -63,7 +63,10 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   migrate once from their retained inline deltas, with digest/accepted checks and
   no historical canonical or accepted source archive reads. Format-2 generations
   migrate their inline identity projections, and format-3 generations migrate
-  their inline W2/B3 overrides, transactionally.
+  their inline W2/B3 overrides, transactionally. Format-4 ticker snapshots
+  migrate by streaming retained incremental blobs and verifying the reconstructed
+  baseline-plus-delta census against the old snapshot; no old source archive or
+  historical canonical row is read.
 * W2 and B2 incremental projections are stored as content-addressed per-identity
   groups. Later publication reads and rewrites only groups affected by the new
   rows or ticker ambiguity; unaffected group contents are not copied or read.
@@ -75,11 +78,15 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   neither copied nor read. Readers resolve the generation-pinned digest on
   access, and old versions remain available to pinned readers. Explicit
   registry binding verifies all retained override blobs.
-* This is **not yet fully delta-only**: the baseline serving index, compact
+* Generation JSON now keeps the incremental ticker census only, not another
+  copy of the baseline census. Reader snapshots and publications reconstruct the
+  merged census from the verified baseline catalog and the compact delta census.
+  Ticker resolution and overlap/reuse ambiguity retain their existing semantics.
+* This is **not yet fully delta-only**: the baseline serving index, incremental
   ticker census, candidate references, and identity-group and override reference
-  maps remain together in each generation JSON. Publication
-  still copies and serializes these accumulated structures, and recomputes
-  index summary counts. Very large or numerous deltas can still hit memory or
+  maps remain together in each generation JSON. Publication still scans and
+  materializes the compact baseline ticker census, copies and serializes these
+  accumulated structures, and recomputes index summary counts. Very large or numerous deltas can still hit memory or
   SQLite single-value limits. No scalable long-running lifecycle is established.
 * The original qualified historical canonical baseline is not reread during
   catalog-backed publication. Q3/Q4 still scan candidate historical row files
@@ -137,7 +144,7 @@ This exceeds the former total 20,000-row guard, but is **not** an M2-scale test
 or a resource claim for approximately 5.7 million rows. No qualified M2 data was
 accessed or modified, and no historical archive was ingested.
 
-Linux disposable-fixture suite: **1045 tests run, 14 skipped**; existing
+Linux disposable-fixture suite: **1051 tests run, 14 skipped**; existing
 unrelated ResourceWarnings remain. Windows validation remains pending.
 
 The scoped-reader tests exercise calendar gap/holiday preservation, UDiFF date
@@ -178,3 +185,9 @@ a single heavily updated identity.
 readers, selected corruption, explicit binding verification, format-3 migration
 with and without pending inputs, rollback/retry, and unaffected baseline
 identity continuity. It does not establish full delta-only scaling.
+
+`tests/test_b5_ticker_delta.py` tests baseline/delta ticker-census parity with
+a complete small synthetic fixture, normal publication without old delta blob or
+historical canonical reads, pinned census behavior, format-4 migration and
+rollback, and corruption checks. Migration tests emulate old generation formats
+in disposable SQLite state; they do not use or prove behavior on qualified M2.

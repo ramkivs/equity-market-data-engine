@@ -29,6 +29,15 @@ def put(db, text, digest):
         raise ValueError('incremental blob collision or corruption')
 
 
+def get(db, digest):
+    if not _valid_digest(digest):
+        raise ValueError('invalid incremental blob digest')
+    row = db.execute('SELECT content FROM composite_blobs WHERE digest=?', (digest,)).fetchone()
+    if row is None or not isinstance(row[0], str) or sha(row[0]) != digest:
+        raise ValueError('incremental blob missing or digest mismatch')
+    return row[0]
+
+
 class BlobMap(Mapping):
     def __init__(self, path, references):
         self.path = path

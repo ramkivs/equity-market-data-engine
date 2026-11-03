@@ -226,34 +226,41 @@ def active_snapshot(baseline, registry_root, state):
             raise RegistryError('active composite digest mismatch')
         payload = json.loads(text)
         _, digest = load_index(state, baseline)
-        if payload.get('format') not in ('bounded-composite/1.0', 'catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0') or payload.get('baseline_manifest_sha256') != baseline.manifest_digest or payload.get('baseline_index_sha256') != digest:
+        if payload.get('format') not in ('bounded-composite/1.0', 'catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0') or payload.get('baseline_manifest_sha256') != baseline.manifest_digest or payload.get('baseline_index_sha256') != digest:
             raise RegistryError('active composite baseline/index mismatch')
-        if payload['format'] in ('catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0'):
+        if payload['format'] in ('catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0'):
             from .continuity_catalog import _metadata, open_catalog, ticker_catalog
             catalog_db, catalog_meta = open_catalog(baseline, state)
             try:
                 catalog_db.execute('BEGIN')
                 if payload.get('catalog_binding') != catalog_meta or _metadata(catalog_db) != catalog_meta:
                     raise RegistryError('active composite catalog mismatch')
-                ticker_catalog(catalog_db, catalog_meta)
+                catalog = ticker_catalog(catalog_db, catalog_meta)
             finally:
                 catalog_db.close()
-        if payload['format'] in ('catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0'):
+        if payload['format'] == 'catalog-composite/5.0':
+            from .catalog_publication import merge_ticker_catalogs, validate_ticker_delta
+            try:
+                validate_ticker_delta(payload.get('symbol_delta'))
+                payload['symbol_catalog'] = merge_ticker_catalogs(catalog, payload['symbol_delta'])
+            except (ValueError, TypeError, KeyError) as exc:
+                raise RegistryError('invalid composite ticker census: %s' % exc) from exc
+        if payload['format'] in ('catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0'):
             from .composite_blobs import BlobMap, GroupMap, OverrideMap, validate_references, validate_group_references, validate_override_references
             try:
                 validate_references(payload)
-                if payload['format'] in ('catalog-composite/3.0', 'catalog-composite/4.0'):
+                if payload['format'] in ('catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0'):
                     validate_group_references(payload)
-                if payload['format'] == 'catalog-composite/4.0':
+                if payload['format'] in ('catalog-composite/4.0', 'catalog-composite/5.0'):
                     validate_override_references(payload)
             except ValueError as exc:
                 raise RegistryError('active composite blob references invalid: %s' % exc) from exc
             payload['delta'] = BlobMap(path, payload['delta'])
             payload['evidence'] = BlobMap(path, payload['evidence'])
-            if payload['format'] in ('catalog-composite/3.0', 'catalog-composite/4.0'):
+            if payload['format'] in ('catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0'):
                 payload['w2_delta'] = GroupMap(path, payload['w2_delta'], 'w2', payload['delta'])
                 payload['b2_delta'] = GroupMap(path, payload['b2_delta'], 'b2', payload['delta'])
-            if payload['format'] == 'catalog-composite/4.0':
+            if payload['format'] in ('catalog-composite/4.0', 'catalog-composite/5.0'):
                 payload['w2_overrides'] = OverrideMap(path, payload['w2_overrides'], 'w2')
                 payload['b3_overrides'] = OverrideMap(path, payload['b3_overrides'], 'b3')
         findings = tuple(row[0] for row in db.execute('SELECT record FROM conflicts ORDER BY file_name,date,digest'))
