@@ -112,14 +112,14 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                     raise RegistryError('active composite baseline/index mismatch')
                 if payload.get('format') == FORMAT_ID and payload.get('catalog_binding') != meta:
                     raise RegistryError('active composite catalog mismatch')
-            if not staged:
+            migrating = previous is not None and payload.get('format') == 'bounded-composite/1.0'
+            if not staged and not migrating:
                 if previous is None:
                     raise RegistryError('no new records or prior generation')
                 db.commit()
                 return {'status': 'UNCHANGED', 'generation': previous[0]}
-            if previous:
-                if payload.get('format') != FORMAT_ID:
-                    raise RegistryError('existing bounded generation requires safe catalog migration')
+            bounded = payload if migrating else None
+            if previous and not migrating:
                 payload = copy.deepcopy(payload)
                 composite_index = payload['index']
                 old_catalog = payload['symbol_catalog']
@@ -132,6 +132,38 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                            'delta': {}, 'evidence': {}, 'candidates': []}
                 composite_index = copy.deepcopy(index)
                 old_catalog = base_catalog
+            # A bounded generation already embeds its accepted incremental
+            # bytes. Rebuild only those deltas against the catalog; never read
+            # the old source archives or historical canonical rows. The old
+            # generation and accepted entries remain untouched.
+            carried = []
+            if migrating:
+                candidates = bounded.get('candidates')
+                delta, evidence = bounded.get('delta'), bounded.get('evidence')
+                if not isinstance(candidates, list) or not candidates or not isinstance(delta, dict) or not isinstance(evidence, dict):
+                    raise RegistryError('bounded migration has invalid retained evidence')
+                accepted = {}
+                for file_name, date, digest, text in db.execute('SELECT file_name,date,digest,record FROM accepted'):
+                    entry = json.loads(text)
+                    if entry.get('publication_kind') == 'composite':
+                        if (entry.get('file_name'), entry.get('date'), entry.get('digest')) != (file_name, date, digest):
+                            raise RegistryError('bounded migration accepted registry identity mismatch')
+                        accepted[(file_name, date, digest)] = entry
+                if len(accepted) != len(candidates):
+                    raise RegistryError('bounded migration accepted input count mismatch')
+                identities, sources, digests = set(), set(), set()
+                for rec in candidates:
+                    identity = (rec['file_name'], rec['date'], rec['digest'])
+                    source = 'incremental/' + rec['digest'] + '.rows.jsonl'
+                    entry = accepted.get(identity)
+                    if identity in identities or source in sources or rec['digest'] in digests or entry is None or any(entry.get(k) != v for k, v in rec.items()):
+                        raise RegistryError('bounded migration accepted input mismatch')
+                    identities.add(identity); sources.add(source); digests.add(rec['digest'])
+                    rows_text, ev = delta[source], evidence[rec['digest']]
+                    rows = _validate(rec, rows_text, ev, baseline)
+                    carried.append((rec, rows_text, ev, rows))
+                if set(delta) != sources or set(evidence) != digests or sum(len(x[3]) for x in carried) > 20000:
+                    raise RegistryError('bounded migration has extra or oversized retained data')
             new = []
             row_count = 0
             batch_dates, batch_digests = set(), set()
@@ -150,7 +182,16 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                 new.append((rec, rows_text, evidence, rows))
             all_new = []
             affected_w2, affected_b2, added_tickers = set(), set(), set()
-            for rec, rows_text, evidence, rows in new:
+            def verify_carried_index():
+                composite_index['counts']['row_files'] = len(composite_index['files'])
+                composite_index['counts']['row_count'] = sum(f['row_count'] for f in composite_index['files'].values())
+                composite_index['counts']['instrument_pairs'] = len({tuple(p) for f in composite_index['files'].values() for p in f['instruments']})
+                if composite_index != bounded.get('index'):
+                    raise RegistryError('bounded migration index disagrees with retained input evidence')
+
+            for number, (rec, rows_text, evidence, rows) in enumerate(carried + new):
+                if migrating and number == len(carried):
+                    verify_carried_index()
                 source = 'incremental/' + rec['digest'] + '.rows.jsonl'
                 pairs, flags = set(), {}
                 for row in rows:
@@ -180,6 +221,8 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                 payload['delta'][source] = rows_text
                 payload['evidence'][rec['digest']] = evidence
                 payload['candidates'].append(rec)
+            if migrating and not new:
+                verify_carried_index()
             catalog = _merge_tickers(old_catalog, all_new)
             # Reuse of a newly observed ticker affects existing valid identities,
             # even when those identities have no rows in this delta.
@@ -211,7 +254,7 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                 db.execute('INSERT INTO accepted VALUES (?,?,?,?)', (rec['file_name'], rec['date'], rec['digest'], _json(entry)))
             db.execute('INSERT INTO composite_active VALUES (1,?) ON CONFLICT(singleton) DO UPDATE SET generation=excluded.generation', (generation,))
             db.commit()
-            return {'status': 'PUBLISHED', 'generation': generation, 'new_inputs': len(new), 'row_count': composite_index['counts']['row_count']}
+            return {'status': 'PUBLISHED', 'generation': generation, 'new_inputs': len(new), 'migrated_bounded_generation': previous[0] if migrating else None, 'row_count': composite_index['counts']['row_count']}
         except (sqlite3.Error, ValueError, KeyError, TypeError) as exc:
             if isinstance(exc, RegistryError):
                 raise

@@ -313,19 +313,74 @@ cp.publish(base,*args)
             db.execute('DROP TRIGGER abrupt_catalog')
         self.assertEqual(publish(*self.args)['status'], 'PUBLISHED')
 
-    def test_existing_bounded_generation_is_preserved_when_migration_is_needed(self):
+    def test_bounded_migration_and_new_delta_preserve_pinned_readers(self):
         write_index(self.args[2], build_index(self.baseline))
         self.stage()
-        old = publish(*self.args)  # original bounded publication, no catalog
+        old = publish(*self.args)
+        pinned = active_snapshot(self.baseline, self.args[1], self.args[2])
+        old_q5 = execute_query_definition('Q5-association', {'security_id':'INE002A01018'}, self.baseline, self.args[2], composite=pinned)
         bootstrap(self.baseline, self.args[2], self.args[1], self.args[3], self.args[4], self.args[5])
+        self.source.unlink()  # accepted inputs must not require their old source archives
         self.next_delta()
-        with self.assertRaisesRegex(RegistryError, 'requires safe catalog migration'):
-            publish(*self.args)
+        original = type(self.baseline).path
+        def blocked(obj, rel):
+            if rel.endswith('.rows.jsonl'):
+                raise AssertionError('migration reread historical canonical rows')
+            return original(obj, rel)
+        path = os.path.join(self.args[1], 'source_registry.sqlite3')
+        with sqlite3.connect(path) as db:
+            db.execute("CREATE TRIGGER block_migration BEFORE UPDATE ON composite_active BEGIN SELECT RAISE(ABORT,'failure'); END")
+        with mock.patch.object(type(self.baseline), 'path', blocked):
+            with self.assertRaises(RegistryError):
+                publish(*self.args)
+            self.assertEqual(active_snapshot(self.baseline, self.args[1], self.args[2])[0].manifest_digest, old['generation'])
+            with sqlite3.connect(path) as db:
+                self.assertEqual(db.execute('SELECT count(*) FROM composite_generations').fetchone()[0], 1)
+                self.assertEqual(db.execute('SELECT count(*) FROM staged_candidates').fetchone()[0], 2)
+                db.execute('DROP TRIGGER block_migration')
+            new = publish(*self.args)
+        self.assertEqual(new['migrated_bounded_generation'], old['generation'])
+        self.assertEqual(new['new_inputs'], 1)
         selected, _ = active_snapshot(self.baseline, self.args[1], self.args[2])
-        self.assertEqual(selected.manifest_digest, old['generation'])
-        self.assertEqual(selected.payload['format'], 'bounded-composite/1.0')
-        q3 = execute_query_definition('Q3-instrument', {'symbol':'RELIANCE','series':'EQ'}, self.baseline, self.args[2])
-        self.assertTrue(any(row['business_date'] == '2016-01-06' for row in q3['rows']))
+        self.assertEqual(selected.payload['format'], 'catalog-composite/1.0')
+        self.assertEqual(len(selected.payload['candidates']), 2)
+        self.assertEqual(execute_query_definition('Q5-association', {'security_id':'INE002A01018'}, self.baseline, self.args[2], composite=pinned), old_q5)
+        q9 = execute_query_definition('Q9-archive-inventory', {}, self.baseline, self.args[2])
+        self.assertEqual(sum(r['source_scope'].startswith('incremental') for r in q9['archives']), 2)
+
+    def test_bounded_migration_without_pending_input_matches_readers(self):
+        write_index(self.args[2], build_index(self.baseline))
+        self.stage(); old = publish(*self.args)
+        pinned = active_snapshot(self.baseline, self.args[1], self.args[2])
+        modes = [('Q3-instrument', {'symbol':'RELIANCE','series':'EQ'}),
+                 ('Q5-association', {'security_id':'INE002A01018'})]
+        before = [execute_query_definition(m, p, self.baseline, self.args[2], composite=pinned) for m,p in modes]
+        bootstrap(self.baseline, self.args[2], self.args[1], self.args[3], self.args[4], self.args[5])
+        self.source.unlink()
+        result = publish(*self.args)
+        self.assertEqual(result['new_inputs'], 0)
+        self.assertEqual(result['migrated_bounded_generation'], old['generation'])
+        after = [execute_query_definition(m, p, self.baseline, self.args[2]) for m,p in modes]
+        self.assertEqual(json.dumps(before, sort_keys=True).replace(old['generation'], result['generation']), json.dumps(after, sort_keys=True))
+        self.assertEqual(publish(*self.args)['status'], 'UNCHANGED')
+
+    def test_bounded_migration_fails_closed_on_accepted_record_corruption(self):
+        write_index(self.args[2], build_index(self.baseline))
+        self.stage(); old = publish(*self.args)
+        bootstrap(self.baseline, self.args[2], self.args[1], self.args[3], self.args[4], self.args[5])
+        path = os.path.join(self.args[1], 'source_registry.sqlite3')
+        with sqlite3.connect(path) as db:
+            record = db.execute("SELECT record FROM accepted WHERE file_name='new.zip'").fetchone()[0]
+            damaged = json.loads(record); damaged['rows_sha256'] = '0' * 64
+            db.execute("UPDATE accepted SET record=? WHERE file_name='new.zip'", (json.dumps(damaged),))
+        with self.assertRaisesRegex(RegistryError, 'accepted input mismatch'):
+            publish(*self.args)
+        with sqlite3.connect(path) as db:
+            self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], old['generation'])
+            self.assertEqual(db.execute('SELECT count(*) FROM composite_generations').fetchone()[0], 1)
+            self.assertEqual(db.execute('SELECT count(*) FROM staged_candidates').fetchone()[0], 1)
+            db.execute("UPDATE accepted SET record=? WHERE file_name='new.zip'", (record,))
+        self.assertEqual(publish(*self.args)['migrated_bounded_generation'], old['generation'])
 
     def test_duplicate_content_is_not_staged_or_published(self):
         self.init(); first = publish(*self.args)

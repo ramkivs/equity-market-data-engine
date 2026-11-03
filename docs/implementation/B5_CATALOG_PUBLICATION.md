@@ -1,8 +1,8 @@
 # B5 OW-10: catalog-backed composite publication
 
 **B5 remains open.** This increment adds an actual catalog-backed publication
-and reader path; it does not close the remaining Q6/Q8/Q9, old-generation
-migration, or accumulated-delta scalability gaps below.
+and reader path, including scoped Q6/Q8/Q9 and bounded-generation migration.
+It does not close the accumulated-delta scalability or lifecycle gaps below.
 
 ## Publication and selected readers
 
@@ -41,11 +41,16 @@ report unavailable incremental reconciliation.
 Without a catalog the original bounded publication path remains for existing
 small fixtures/installations. If a format-1 catalog exists, it must first be
 upgraded with `catalog-upgrade`; malformed or mismatched catalogs fail closed.
-The catalog-backed publisher refuses a pending new delta if the active
-publication is an old `bounded-composite/1.0` generation: it does **not**
-silently switch, re-ingest, discard staged records, or overwrite that active
-generation. A safe migration of already-published bounded generations is still
-required.
+The catalog-backed publisher migrates an active `bounded-composite/1.0`
+generation in its publication transaction, with or without pending new inputs.
+It validates the retained incremental rows and evidence, checks their accepted
+registry identities and reconstructs and compares the bounded serving index.
+It derives affected identities from the catalog and the retained deltas, without
+reading historical canonical rows or accepted source archives. The prior
+generation, accepted entries and staging remain intact; the new generation and
+any new accepted entries become active atomically. Invalid or inconsistent
+evidence fails closed, leaving the old pointer in place. This is a one-time
+bounded-delta migration, not a solution to accumulated-delta rematerialization.
 
 ## Scope limits — no B5 completion claim
 
@@ -89,8 +94,8 @@ normal selected UI/CLI/saved/history paths, W2/B3 parity on a small complete
 fixture, ticker transitions and reused-ticker ambiguity, Q3/Q4/Q5/Q7, a retained
 in-flight request, D21 and duplicate detection, first and second publication
 rollback/retry, abrupt subprocess exit before pointer commit, restart without
-source archives or `--registry`, catalog corruption, and safe refusal of an old
-bounded-generation migration.
+source archives or `--registry`, catalog corruption, and bounded-generation
+migration including missing old source archives, corruption and rollback/retry.
 
 A separate *actual persisted synthetic baseline* contains **20,009 canonical
 rows**. Its catalog is bootstrapped once; a three-row delta is then published
@@ -99,7 +104,7 @@ This exceeds the former total 20,000-row guard, but is **not** an M2-scale test
 or a resource claim for approximately 5.7 million rows. No qualified M2 data was
 accessed or modified, and no historical archive was ingested.
 
-Linux disposable-fixture suite: **1021 tests run, 14 skipped**; existing
+Linux disposable-fixture suite: **1023 tests run, 14 skipped**; existing
 unrelated ResourceWarnings remain. Windows validation remains pending.
 
 The scoped-reader tests exercise calendar gap/holiday preservation, UDiFF date
