@@ -1,5 +1,9 @@
 # B5: second-gate assessment and independent restart verification
 
+> Historical assessment: subsequently superseded by the owner’s explicit
+> D16-13(2) / D23 authorization. See `B5_AUTHORIZED_INCREMENTAL_PROGRESS.md`.
+> That authorization removes the gate; it does not itself complete OW-10.
+
 Status: **OW-10 / incremental ingestion not implemented; B5 remains blocked.**
 This record and its tests do not authorize the withheld operation, modify a
 governing decision, or create an incremental registry or publication.
