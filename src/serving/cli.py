@@ -597,7 +597,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=None,
         metavar="NAME=VALUE",
-        help="Q4: exact-value filter on one of series/segment/source/instrument_type (repeatable; AND semantics)",
+        help="Q4: exact-value filter on one of series/segment/source/instrument_type/symbol (repeatable; AND semantics)",
     )
     p_query.add_argument(
         "--from",
@@ -644,7 +644,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="instrument_symbol",
         default=None,
         metavar="SYMBOL",
-        help="Q5: the instrument's exact as-published listing_symbol (with --instrument-series)",
+        help="Q5: the instrument trading symbol or exact as-published listing_symbol (with --instrument-series)",
     )
     p_query.add_argument(
         "--instrument-series",
@@ -670,7 +670,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Q4-filter, Q5-association, Q6-calendar, Q7-record-detail, Q8-data-quality, "
             "Q9-archive-inventory, Q10-qualification",
         )
-        p.add_argument("--symbol", default=None, help="Q3: listing symbol (exact, as published)")
+        p.add_argument("--symbol", default=None, help="Q3: trading symbol or exact published listing_symbol")
         p.add_argument("--series", default=None, help="Q3: series (exact, as published)")
         p.add_argument("--year", type=int, default=None, help="Q1/Q3: restrict to one calendar-year partition")
         p.add_argument("--family", default=None, help="Q1: restrict to one format family (exact, as published)")
@@ -694,7 +694,7 @@ def build_parser() -> argparse.ArgumentParser:
             action="append",
             default=None,
             metavar="NAME=VALUE",
-            help="Q4: exact-value filter on series/segment/source/instrument_type (repeatable)",
+            help="Q4: exact-value filter on series/segment/source/instrument_type/symbol (repeatable)",
         )
         p.add_argument(
             "--identity",
@@ -708,7 +708,7 @@ def build_parser() -> argparse.ArgumentParser:
             dest="instrument_symbol",
             default=None,
             metavar="SYMBOL",
-            help="Q5: the instrument's exact as-published listing_symbol",
+            help="Q5: the instrument trading symbol or exact as-published listing_symbol",
         )
         p.add_argument(
             "--instrument-series",

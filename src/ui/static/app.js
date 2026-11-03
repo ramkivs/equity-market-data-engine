@@ -16,7 +16,7 @@ const MODE = {
   Q5: "Q5-association", Q6: "Q6-calendar", Q7: "Q7-record-detail",
   Q8: "Q8-data-quality", Q9: "Q9-archive-inventory", Q10: "Q10-qualification",
 };
-const Q4_FIELDS = ["series", "segment", "source", "instrument_type"];
+const Q4_FIELDS = ["series", "segment", "source", "instrument_type", "symbol"];
 const QUICK_FILTERS = ["EQ (CM)", "EQ (FO)", "Debt", "Currency", "Latest 1Y", "Latest 3Y", "Latest 5Y", "Latest 10Y", "Reliable Only"];
 const SEGMENT_COLORS = ["#3B82F6", "#FF813D", "#F4C83D", "#FF716D", "#20D18A", "#8FA7BD"];
 const COMPACT_NUM = (n) => {
@@ -871,7 +871,7 @@ function builderParams() {
   if (b.mode === MODE.Q3) {
     const symbol = $("q-symbol").value.trim(), series = $("q-series").value.trim();
     const yearRaw = $("q-year").value;
-    if (!symbol || !series) return { error: "Q3 requires both symbol and series (exact as-published values)." };
+    if (!symbol || !series) return { error: "Q3 requires both trading symbol (or published listing symbol) and series." };
     const params = { symbol, series };
     if (yearRaw !== "") {
       const year = parseInt(yearRaw, 10);
@@ -883,7 +883,7 @@ function builderParams() {
   if (b.mode === MODE.Q4) {
     const filters = {};
     for (const f of b.q4) {
-      if (!f.field || !Q4_FIELDS.includes(f.field)) return { error: "Every Q4 filter needs a supported field (series/segment/source/instrument_type)." };
+      if (!f.field || !Q4_FIELDS.includes(f.field)) return { error: "Every Q4 filter needs a supported field (series/segment/source/instrument_type/symbol)." };
       if (f.value === "") return { error: "Every Q4 filter needs an exact as-published value (blank is not a value)." };
       if (f.value !== f.field && filters[f.field] !== undefined) return { error: "One value per field (AND semantics; equality only)." };
       filters[f.field] = f.value;
@@ -971,7 +971,7 @@ function resetBuilder() {
 /* ============================ explorer: results ============================ */
 
 const RESULT_COLUMNS = [
-  ["#", "#", "num"], ["Trade Date", "date", ""], ["Symbol", "symbol", ""], ["ISIN", "isin", ""],
+  ["#", "#", "num"], ["Trade Date", "date", ""], ["Observed ticker", "symbol", ""], ["ISIN", "isin", ""],
   ["Series", "series", ""], ["Segment", "segment", ""], ["Open", "open", "num"], ["High", "high", "num"],
   ["Low", "low", "num"], ["Close", "close", "num"], ["Volume", "volume", "num"], ["Turnover (₹)", "turnover", "num"], ["Status", "status", ""],
 ];
@@ -1006,7 +1006,7 @@ function renderResults() {
     html += "<tr data-gi=\"" + gi + '" class="' + (gi === R.selected ? "selected" : "") + '"' + (fs.state === "flagged" ? " flagged" : "") + ' tabindex="0" title="' + esc(row.serving ? (row.serving.source_file || "") + ":" + (row.serving.source_line_number !== undefined ? row.serving.source_line_number : row.source_line_number) : "") + '">' +
       cell(gi + 1, "num muted") +
       cell(row.business_date, "mono") +
-      cell(vs.listing_symbol, "mono") +
+      cell(((row.serving || {}).trading_symbol || {}).observed_symbol, "mono") +
       cell(vs.security_isin, "mono") +
       cell(vs.series) +
       cell(vs.segment) +
@@ -1065,8 +1065,8 @@ async function selectRow(gi) {
   try {
     const [detailDoc, relatedDoc] = await Promise.all([
       api.query(MODE.Q7, { source_file: sourceFile, source_line_number: sourceLine }),
-      (sv(row, "listing_symbol") && sv(row, "series"))
-        ? api.query(MODE.Q5, { symbol: sv(row, "listing_symbol"), series: sv(row, "series") })
+      ((((row.serving || {}).trading_symbol || {}).effective_symbol || sv(row, "listing_symbol")) && sv(row, "series"))
+        ? api.query(MODE.Q5, { symbol: ((row.serving || {}).trading_symbol || {}).effective_symbol || sv(row, "listing_symbol"), series: sv(row, "series") })
         : Promise.resolve(null),
     ]);
     if (R.selected !== gi) return; /* a newer selection superseded this fetch */
@@ -1105,7 +1105,9 @@ function renderInspector() {
   const assocCount = insp.related && insp.related.record_count !== undefined ? insp.related.record_count : null;
   const kv = (k, v, cls) => "<tr><td class=\"k\">" + esc(k) + "</td><td class=\"v " + (cls || "") + "\">" + (v === null || v === undefined ? '<span class="chip unavail">unavailable</span>' : esc(String(v))) + "</td></tr>";
   let html = "<div class=\"insp-group\"><div class=\"insp-group-title\">Instrument</div><table class=\"kv-table\">" +
-    kv("Symbol", vs.listing_symbol, "mono") + kv("ISIN", vs.security_isin, "mono") + kv("Series", vs.series, "mono") +
+    kv("Observed ticker", ((d.row.serving || {}).trading_symbol || {}).observed_symbol, "mono") +
+    kv("Ticker source", ((d.row.serving || {}).trading_symbol || {}).source_column) +
+    kv("Published listing_symbol", vs.listing_symbol, "mono") + kv("ISIN", vs.security_isin, "mono") + kv("Series", vs.series, "mono") +
     "</table></div>";
   html += "<div class=\"insp-group\"><div class=\"insp-group-title\">Trading Details</div><table class=\"kv-table\">" +
     kv("Trade Date", row.business_date, "mono") + kv("Segment", vs.segment) +
@@ -1129,8 +1131,10 @@ function renderInspector() {
   if (insp.related && insp.related.record_count > 0) {
     html += "<div class=\"insp-group\"><div class=\"insp-group-title\">Related Records (Q5, as published)</div><div class=\"rel-list\">";
     for (const rec of insp.related.records.slice(0, 8)) {
-      html += "<div class=\"rel-item\"><b>" + esc(rec.symbol || "") + "</b> " + esc(rec.series || "") +
-        " <span class=\"meta\">" + esc(rec.observed_from || "") + " → " + esc(rec.observed_to || "") + " · " + esc(rec.interval_basis || "") +
+      const projected = ((rec.serving || {}).trading_symbol || {}).observed_symbols || [];
+      const tickerText = projected.length ? projected.join(", ") : "ticker unavailable";
+      html += "<div class=\"rel-item\"><b>" + esc(tickerText) + "</b> " + esc(rec.series || "") +
+        " <span class=\"meta\">published symbol: " + esc(rec.symbol || "") + " · " + esc(rec.observed_from || "") + " → " + esc(rec.observed_to || "") + " · " + esc(rec.interval_basis || "") +
         " · " + (rec.contributing_rows ? rec.contributing_rows.length + " contributing rows" : "") + "</span></div>";
     }
     html += "</div></div>";

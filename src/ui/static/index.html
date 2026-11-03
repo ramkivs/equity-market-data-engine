@@ -158,8 +158,8 @@
                     <input id="q-date-to" class="input" type="date" aria-label="Date to">
                   </label>
                   <label class="field" id="fld-symbol">
-                    <span class="field-name">Symbol (exact)</span>
-                    <input id="q-symbol" class="input" type="text" placeholder="as published" aria-label="Symbol">
+                    <span class="field-name">Trading symbol (or published listing_symbol)</span>
+                    <input id="q-symbol" class="input" type="text" placeholder="Trading symbol or FinInstrmId" aria-label="Published listing symbol">
                   </label>
                   <label class="field" id="fld-series">
                     <span class="field-name">Series (exact)</span>
@@ -171,7 +171,7 @@
                   </label>
                 </div>
                 <div id="q4-block">
-                  <div class="section-label">Optional exact-value filters (AND; fields: series, segment, source, instrument_type)</div>
+                  <div class="section-label">Optional exact-value filters (AND; fields: series, segment, source, instrument_type, symbol)</div>
                   <div id="q4-rows"></div>
                   <div class="q4-add"><button id="q4-add" class="btn btn-small">Add Filter</button>
                     <span class="muted" id="q4-note">Values must be exact as-published strings; no normalization, no operators other than equality.</span>

@@ -108,15 +108,11 @@ class QueryBase(unittest.TestCase):
 
 class Q3InstrumentQueryTests(QueryBase):
     def test_instrument_key_is_exact_as_published_per_family(self):
-        # Q3 matches the as-published (listing_symbol, series) — never normalised,
-        # and never conflated across families. In legacy13 listing_symbol is SYMBOL
-        # ("RELIANCE"); in udiff34 it is FinInstrmId ("500325") while the ticker
-        # sits in underlying_symbol (TckrSymb) (D05 §3.1 field map). An ISIN-based
-        # cross-family correlation is NOT authorized by Q3 (ISIN is a non-identity
-        # attribute — D16-10 Q3).
+        # Trading ticker matches the two eras through the valid ISIN; canonical
+        # values remain untouched, and the old raw FinInstrmId selector works.
         legacy = query_instrument(self.handle, self.index, "RELIANCE", "EQ")
-        self.assertEqual([r["business_date"] for r in legacy], ["2016-01-04", "2016-01-05", "2017-02-06"])
-        self.assertEqual([r["format_family"] for r in legacy], ["legacy13"] * 3)
+        self.assertEqual([r["business_date"] for r in legacy], ["2016-01-04", "2016-01-05", "2017-02-06", "2024-03-05"])
+        self.assertEqual([r["format_family"] for r in legacy], ["legacy13"] * 3 + ["udiff34"])
         udiff = query_instrument(self.handle, self.index, "500325", "EQ")
         self.assertEqual([r["business_date"] for r in udiff], ["2024-03-05"])
         self.assertEqual([r["format_family"] for r in udiff], ["udiff34"])
@@ -155,7 +151,7 @@ class Q3InstrumentQueryTests(QueryBase):
         # even though the symbol exists
         self.assertEqual(query_instrument(self.handle, self.index, "RELIANCE", "BE"), ())
         rows = query_instrument(self.handle, self.index, "RELIANCE", "EQ")
-        self.assertEqual(len(rows), 3)
+        self.assertEqual(len(rows), 4)
 
     def test_unknown_instrument_returns_empty_tuple_not_error(self):
         self.assertEqual(query_instrument(self.handle, self.index, "NOPE", "EQ"), ())
@@ -248,7 +244,7 @@ class StaleIndexTests(QueryBase):
         self.assertFalse(report["identical"])
         document, _digest = load_index(self.state, other_handle)
         rows = query_instrument(other_handle, document, "RELIANCE", "EQ")
-        self.assertEqual(len(rows), 3)
+        self.assertEqual(len(rows), 4)
 
     def test_corrupt_index_sidecar_is_refused(self):
         path = os.path.join(self.state, INDEX_DIGEST_FILENAME)

@@ -115,7 +115,7 @@ class AdapterOverHttpTests(UiHttpBase):
         self.assertEqual(first[0], 200)
         self.assertEqual(first[2], second[2])  # byte-identical bodies
         document = json.loads(first[2])
-        self.assertEqual(document["query"]["result_count"], 3)
+        self.assertEqual(document["query"]["result_count"], 4)
 
     def test_invalid_request_error_document(self):
         status, _, document = self.http_json("POST", "/api/query", {"mode": "Q4-filter", "params": {"filters": {"trading_status": "X"}}})
@@ -148,7 +148,7 @@ class AdapterOverHttpTests(UiHttpBase):
         self.assertEqual(status, 201)
         status, _, document = self.http_json("POST", "/api/saved/tcs-2016/run", {})
         self.assertEqual(status, 200)
-        self.assertEqual(document["query"]["result_count"], 3)
+        self.assertEqual(document["query"]["result_count"], 4)
         # C2(a): the saved run wrote no history
         status, _, document = self.http_json("GET", "/api/history")
         self.assertEqual(document["count"], 0)

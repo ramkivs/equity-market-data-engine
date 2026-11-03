@@ -59,6 +59,7 @@ from __future__ import annotations
 import json
 
 from .archive import parse_input_manifest
+from .symbols import observed_trading_symbol
 from .baseline import Baseline
 from .query import QueryError
 
@@ -213,6 +214,7 @@ def query_record_detail(
     meta = index["files"][source_file]
     served = {key: value for key, value in row.items() if key != "raw_line"}
     served["serving"] = {
+        "trading_symbol": observed_trading_symbol(row),
         "query": RECORD_DETAIL_QUERY_ID,
         "source_file": source_file,
         "source_file_family": meta.get("family"),

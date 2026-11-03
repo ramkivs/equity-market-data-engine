@@ -129,7 +129,7 @@ class FilterBase(unittest.TestCase):
 
 class Q4ExactValueTests(FilterBase):
     def test_field_vocabulary_is_the_governed_one(self):
-        self.assertEqual(Q4_FILTER_FIELDS, ("series", "segment", "source", "instrument_type"))
+        self.assertEqual(Q4_FILTER_FIELDS, ("series", "segment", "source", "instrument_type", "symbol"))
 
     def test_exact_value_match(self):
         rows = query_filters(self.handle, self.index, {"series": "EQ"})

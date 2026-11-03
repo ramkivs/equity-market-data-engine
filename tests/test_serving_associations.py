@@ -249,7 +249,9 @@ class Q5InstrumentLookupTests(Q5Base):
     (12) deterministic ordering."""
 
     def test_valid_instrument_lookup_returns_the_dated_intervals(self):
-        (interval,) = query_associations(self.handle, self.index, symbol="RELIANCE", series="EQ")
+        intervals = query_associations(self.handle, self.index, symbol="RELIANCE", series="EQ")
+        self.assertEqual([item["symbol"] for item in intervals], ["RELIANCE", "500325"])
+        interval = intervals[0]
         self.assertEqual(interval["symbol"], "RELIANCE")
         self.assertEqual(interval["series"], "EQ")
         self.assertEqual(interval["security_id"], "INE002A01018")
@@ -288,23 +290,16 @@ class Q5InstrumentLookupTests(Q5Base):
         self.assertEqual(doc["observations"]["symbols_observed"], "2")
 
     def test_same_instrument_across_multiple_identities(self):
-        # TCS/EQ: one interval in each of two distinct identities (the
-        # defective-ISIN rows are separate correlation keys — D05 §6.1 — and the
-        # UDiff TCS row is published under symbol 500304, so it is a different
-        # instrument), served in file order (line 1, then line 4)
+        # Invalid ISINs remain separate exact observations, never correlated.
         intervals = query_associations(self.handle, self.index, symbol="TCS", series="EQ")
-        self.assertEqual(len(intervals), 2)
-        self.assertEqual([i["serving"]["source_line_number"] for i in intervals], [1, 4])
-        self.assertEqual([i["security_id"] for i in intervals], ["INE000000006", "INE123"])
-        for interval in intervals:
-            self.assertEqual(interval["symbol"], "TCS")
-            self.assertEqual(interval["series"], "EQ")
+        self.assertEqual([i["security_id"] for i in intervals], ["INE000000006", "INE123", "INE467B01029"])
+        self.assertEqual([i["symbol"] for i in intervals], ["TCS", "TCS", "500304"])
 
     def test_combined_mode_restricts_the_identity_to_the_pair(self):
         combined = query_associations(
             self.handle, self.index, security_id="INE002A01018", symbol="RELIANCE", series="EQ"
         )
-        self.assertEqual(len(combined), 1)
+        self.assertEqual(len(combined), 2)
         self.assertEqual(combined[0]["serving"]["security_id"], "INE002A01018")
         self.assertEqual(query_associations(self.handle, self.index, security_id="INE002A01018", symbol="500325", series="EQ")[0]["observed_from"], "2024-03-05")
         # the pair exists, but not on this identity
@@ -478,8 +473,8 @@ class Q5CliTests(Q5Base):
         code, out = self.run_cli(*self._query_args("--instrument-symbol", "TCS", "--instrument-series", "EQ"))
         self.assertEqual(code, 0)
         envelope = json.loads(out)
-        self.assertEqual(envelope["record_count"], 2)
-        self.assertEqual([r["security_id"] for r in envelope["records"]], ["INE000000006", "INE123"])
+        self.assertEqual(envelope["record_count"], 3)
+        self.assertEqual([r["security_id"] for r in envelope["records"]], ["INE000000006", "INE123", "INE467B01029"])
         self.assertEqual(envelope["symbol"], "TCS")
         self.assertEqual(envelope["series"], "EQ")
         self.assertIsNone(envelope["security_id"])
@@ -491,7 +486,7 @@ class Q5CliTests(Q5Base):
         )
         self.assertEqual(code, 0)
         envelope = json.loads(out)
-        self.assertEqual(envelope["record_count"], 1)
+        self.assertEqual(envelope["record_count"], 2)
         self.assertEqual(envelope["records"][0]["observed_from"], "2016-01-04")
 
     def test_unknown_key_cli_is_empty_success(self):

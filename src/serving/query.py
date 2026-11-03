@@ -1,27 +1,9 @@
-"""Serving query surface (D16-10) — the slice's query categories.
+"""Serving query surface over an immutable qualified baseline.
 
-Q1 dataset/partition selection + yearly summaries, Q2 date-range query, Q3
-instrument query, Q4 exact-value filters, Q5 identity/association queries,
-and Q6 calendar queries. Semantics of Q3, verified against the governing
-contract (D16-10 Q3; D05 §§3.1/5/6/8):
-
-* instrument = (listing_symbol, series) — dated attributes, never durable identity
-  (D05 §3.1: "SYMBOL never durable"; 845 ISINs with multiple symbols); ISIN is a
-  non-identity attribute and is NOT a query key here;
-* match = exact equality of the as-published ``listing_symbol`` and ``series``
-  values (no case/whitespace normalisation, no expression language — D23 §10: no
-  arbitrary query semantics outside the established Q1–Q10/saved-query boundary);
-* results carry the canonical row exactly as stored: as-published field values
-  (``source_values``; ``None`` = absent in that family, ``""`` = blank — neither is
-  ever defaulted, D05 §2 rule 3), non-gating flags, ``business_date``, and the row's
-  own D05 §8 provenance block;
-* ``raw_line`` (retained raw text, L1 retention) is NOT part of the served view:
-  serving exposes verbatim as-published field values; raw row text exposure would
-  require a future explicit decision in the spirit of D16-08 class-5 exclusions;
-* ordering is deterministic: (business_date, format_family, year, source file,
-  source line number);
-* read-only: the query streams class-(1) files and writes nothing; a query failure
-  can never corrupt durable data (D16-09 invariant).
+Q3 and the optional Q4 symbol selector use observed trading symbols and
+valid-ISIN correlations. Reuse and conflicting observed bounds fail closed.
+Q5 keeps published association data intact and adds serving-side annotations.
+Raw canonical source fields and provenance are never remapped.
 """
 
 from __future__ import annotations
@@ -34,6 +16,7 @@ from typing import Optional, Tuple
 
 from .baseline import Baseline, BaselineError
 from .index import ServingIndexError
+from .symbols import observed_trading_symbol, build_symbol_catalog, resolve_symbol, row_matches, resolution_metadata
 
 QUERY_ID = "Q3-instrument"
 DATASET_QUERY_ID = "Q1-dataset"
@@ -173,7 +156,7 @@ CALENDAR_TOTALS_KEYS = frozenset(
 #:   values are absent (``None``) and can never match any requested value.
 #: No other field is a Q4 filter: a requested name outside this tuple fails
 #: closed (no undocumented aliases, no synonyms).
-Q4_FILTER_FIELDS = ("series", "segment", "source", "instrument_type")
+Q4_FILTER_FIELDS = ("series", "segment", "source", "instrument_type", "symbol")
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -198,6 +181,23 @@ def _validate_iso_date(label: str, value: object) -> str:
     return value
 
 
+
+_symbol_catalog_cache = {}
+
+def _symbol_catalog(baseline, index):
+    key = (baseline.root, baseline.manifest_digest, tuple(sorted(index.get("files", {}))))
+    if key not in _symbol_catalog_cache:
+        _symbol_catalog_cache.clear()
+        _symbol_catalog_cache[key] = build_symbol_catalog(baseline, index)
+    return _symbol_catalog_cache[key]
+
+def _resolve(catalog, symbol, series):
+    try:
+        return resolve_symbol(catalog, symbol, series)
+    except ValueError as exc:
+        raise QueryError("symbol-ambiguous", str(exc))
+
+
 def query_instrument(
     baseline: Baseline,
     index: dict,
@@ -205,10 +205,10 @@ def query_instrument(
     series: str,
     year: Optional[int] = None,
 ) -> Tuple[dict, ...]:
-    """Return the canonical rows for one (symbol, series) instrument, oldest first.
+    """Return observed ticker matches and unambiguous valid-ISIN correlations.
 
-    ``year`` (optional) restricts the result to that calendar-year partition.
-    An unknown instrument yields an empty tuple (not an error).
+    A symbol not observed as a ticker remains an exact published listing_symbol
+    selector for compatibility. Years restrict output, not ambiguity detection.
     """
     if not isinstance(symbol, str) or not isinstance(series, str):
         raise QueryError("query-input", "symbol and series must be strings")
@@ -218,10 +218,12 @@ def query_instrument(
             raise QueryError("query-input", "year must be a 4-digit integer")
         year_str = str(year)
 
+    catalog = _symbol_catalog(baseline, index)
+    selection = _resolve(catalog, symbol, series)
     pair = [symbol, series]
     candidates = []
     for relative, meta in index.get("files", {}).items():
-        if pair not in meta.get("instruments", []):
+        if selection["kind"] == "raw" and pair not in meta.get("instruments", []):
             continue
         if year_str is not None and meta.get("year") != year_str:
             continue
@@ -241,10 +243,12 @@ def query_instrument(
                 values = obj.get("source_values")
                 if not isinstance(values, dict):
                     raise QueryError("query-scan", "canonical row without contract keys in %s" % relative)
-                if values.get("listing_symbol") != symbol or values.get("series") != series:
+                if not row_matches(obj, selection):
                     continue
                 served = {key: value for key, value in obj.items() if key != "raw_line"}
                 served["serving"] = {
+                    "trading_symbol": observed_trading_symbol(obj),
+                    "symbol_resolution": resolution_metadata(obj, selection),
                     "query": QUERY_ID,
                     "series": series,
                     "source_file": relative,
@@ -327,6 +331,7 @@ def query_date_range(
                     continue
                 served = {key: value for key, value in obj.items() if key != "raw_line"}
                 served["serving"] = {
+                    "trading_symbol": observed_trading_symbol(obj),
                     "query": DATE_RANGE_QUERY_ID,
                     "date_from": date_from,
                     "date_to": date_to,
@@ -352,34 +357,9 @@ def query_filters(
     index: dict,
     filters: dict,
 ) -> Tuple[dict, ...]:
-    """Q4 segment / market-type / series / trading-status filtering
-    (D16-10 Q4: "as-published field values").
+    """Q4 exact field filters; optional symbol uses the Q3 resolver.
 
-    ``filters`` maps one or more of :data:`Q4_FILTER_FIELDS` to the exact
-    as-published value to match. Semantics, per the governing contract
-    (D16-10 Q4; D05 §3.1; D22 §5 E1; D23 §10):
-
-    * **exact-value equality only** — no normalisation, translation, case or
-      whitespace folding, and no expression language; the requested value must
-      be a string (the empty string matches exactly-blank stored values);
-    * **absent never matches** — a row whose field value is absent (``None``,
-      the legacy family for the UDiFF-only fields) can never match any
-      requested value, including the empty string;
-    * **AND semantics** — a row is served only when every requested field
-      matches exactly (the single contract-supported composition);
-    * **format-family handling** — ``series`` is checked on every row of both
-      families; ``segment``/``source``/``instrument_type`` match only where
-      the family stores them (UDiff), by the same absent-never-matches rule.
-
-    There is no per-field index census, so every row file is a candidate and
-    each row is re-checked against its exact as-published values (the index
-    supplies the file set only — no index extension is required, and the
-    deterministic rebuild/stale-index behavior is untouched). Malformed
-    requests (non-dict, empty, unknown field, non-string value) fail closed
-    with :class:`QueryError` before any row is served. Results carry the
-    canonical row exactly as stored (``raw_line`` never served) plus the Q4
-    serving envelope; ordering is the established deterministic 5-tuple
-    shared with Q2/Q3. Read-only: files are streamed, nothing is written.
+    Other field values remain exact and AND-composed; absent values never match.
     """
     if not isinstance(filters, dict):
         raise QueryError("query-input", "filters must be a mapping of Q4 field -> exact value")
@@ -395,6 +375,13 @@ def query_filters(
         if not isinstance(value, str):
             raise QueryError("query-input", "Q4 filter value for %r must be a string (as-published value), got %r" % (field, value))
 
+    symbol_selections = None
+    if "symbol" in filters:
+        catalog = _symbol_catalog(baseline, index)
+        series_values = {filters["series"]} if "series" in filters else (
+            {o[1] for o in catalog['observations'] if o[0] == filters['symbol']} |
+            {pair[1] for meta in index.get('files', {}).values() for pair in meta.get('instruments', []) if pair[0] == filters['symbol']})
+        symbol_selections = {series: _resolve(catalog, filters['symbol'], series) for series in series_values}
     results = []
     for relative in sorted(index.get("files", {})):
         meta = index["files"][relative]
@@ -409,16 +396,21 @@ def query_filters(
                 values = obj.get("source_values")
                 if not isinstance(values, dict):
                     raise QueryError("query-scan", "canonical row without contract keys in %s" % relative)
-                if any(values.get(field) != value for field, value in filters.items()):
+                if any(values.get(field) != value for field, value in filters.items() if field != "symbol"):
+                    continue
+                if symbol_selections is not None and (values.get("series") not in symbol_selections or not row_matches(obj, symbol_selections[values.get("series")])):
                     continue
                 served = {key: value for key, value in obj.items() if key != "raw_line"}
                 served["serving"] = {
+                    "trading_symbol": observed_trading_symbol(obj),
                     "query": FILTER_QUERY_ID,
                     "filters": dict(filters),
                     "source_file": relative,
                     "source_file_family": meta.get("family"),
                     "source_file_year": meta.get("year"),
                 }
+                if symbol_selections is not None:
+                    served["serving"]["symbol_resolution"] = resolution_metadata(obj, symbol_selections[values["series"]])
                 results.append(served)
     results.sort(
         key=lambda row: (
@@ -601,53 +593,12 @@ def query_associations(
     series: Optional[str] = None,
     documents: object = _UNPARSE,
 ) -> Tuple[dict, ...]:
-    """Q5 identity/association query (D16-10 Q5: "related records" = the
-    instrument's dated-association intervals; no overlay aggregation — D05).
+    """Return published W2 identity or association records with serving annotations.
 
-    Two governed selector forms over ``w2/associations.jsonl`` (the class-(2)
-    W2 output; D05 §3.2/§3.3), plus their composition:
-
-    * **identity** — ``security_id`` only: the identity document for that exact
-      as-published correlation key (normalized ISIN; D05 §6.1) with all of its
-      dated-association intervals as published;
-    * **instrument** — ``symbol`` **and** ``series`` (both, exact as-published
-      strings): every dated-association interval in every identity document
-      whose (symbol, series) matches exactly — the instrument's "related
-      records", across identities;
-    * **combined** — all three: that identity's intervals restricted to the
-      (symbol, series) pair (the single contract-supported composition).
-
-    Semantics, per the governing contract (D05 §3.2/§3.3/§3.5; D16-10 Q5;
-    D23 §8/§10):
-
-    * **exact-value matching only** — selectors are compared verbatim to the
-      as-published stored values (the engine already normalized the key; no
-      case/whitespace folding, no expression language, no aliasing or
-      inference of relationships);
-    * **absent is never an error** — a missing ``w2/associations.jsonl``, an
-      unknown identity, or an unknown instrument all yield an empty result
-      (served with ``associations_present`` at the CLI level);
-    * **as-published serving** — the document is served exactly as stored
-      (its 10-key ``SecurityIdentity`` / 10-key ``DatedAssociation`` shape,
-      including ``is_valid_isin_format: null`` where undetermined and the
-      non-promotion note) plus the Q5 ``serving`` envelope;
-    * **overlay rows appear in no document** (the engine excludes them at
-      ingestion, D05 §3.5) — Q5 neither aggregates nor exposes overlay
-      observations;
-    * **ordering is file order** — the engine's sorted normalized-ISIN key
-      order with published association order within each document; never
-      re-sorted;
-    * **fail closed** — malformed selectors or a malformed present file raise
-      :class:`QueryError` before anything is served (no partial output).
-
-    ``index`` is accepted for boundary consistency (every Q path takes the
-    verified class-(4) index) but supplies no Q5 file narrowing: Q5's file
-    set is fixed (the single class-(2) file) and the index format is
-    unchanged. ``documents`` may carry a result already returned by
-    :func:`parse_associations` (the CLI does so to serve the
-    ``associations_present`` marker from the same single pass); omitted
-    callers get the parse performed here. Read-only: the file is streamed
-    and nothing is written.
+    A ticker selector uses the shared ISIN resolver, returning published
+    intervals within the selected identity. Invalid-ISIN records may be
+    returned only as separate exact observations. Observed bounds do not
+    assert a symbol's validity between observation dates.
     """
     if security_id is not None and not isinstance(security_id, str):
         raise QueryError("query-input", "security_id must be a string (exact as-published correlation key)")
@@ -669,17 +620,33 @@ def query_associations(
     if documents is None:
         return ()
 
+    catalog = _symbol_catalog(baseline, index) if symbol is not None else None
+    selection = _resolve(catalog, symbol, series) if catalog is not None else None
     results = []
     for line_number, doc in documents:
         if security_id is not None and doc["security_id"] != security_id:
             continue
         if symbol is not None:
             for entry in doc["associations"]:
-                if entry["symbol"] != symbol or entry["series"] != series:
+                if entry["series"] != series:
                     continue
+                if selection["kind"] == "raw":
+                    if entry["symbol"] != symbol:
+                        continue
+                elif selection["identity"]:
+                    if doc["security_id"] != selection["identity"] and not (entry["symbol"] == symbol and doc.get("is_valid_isin_format") is not True):
+                        continue
+                elif entry["symbol"] != symbol:
+                    continue
+                evidence = sorted({o[0] for o in catalog['observations']
+                                   if o[2] == doc['security_id'] and o[1] == entry['series']
+                                   and o[3] == entry['symbol'] and o[4] and o[5]
+                                   and (entry['observed_from'] <= o[4] <= entry['observed_to'] or entry['observed_from'] <= o[5] <= entry['observed_to'])})
                 served = dict(entry)
                 served["serving"] = {
                     "query": ASSOCIATIONS_QUERY_ID,
+                    "trading_symbol": {"observed_symbols": evidence, "status": "observed" if len(evidence) == 1 else ("ambiguous" if evidence else "unavailable"), "basis": "dated-source-observations-not-validity"},
+                    "symbol_resolution": {"selector": symbol, "correlation_identity": selection["identity"] if selection["identity"] == doc["security_id"] else None, "basis": "valid-isin-correlation" if selection["identity"] and selection["identity"] == doc["security_id"] else "exact-observation"},
                     "security_id": doc["security_id"],
                     "series": series,
                     "source_file": ASSOCIATIONS_FILE,

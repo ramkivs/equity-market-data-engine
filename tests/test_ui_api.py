@@ -101,7 +101,7 @@ class QueryPathTests(UiApiBase):
         status, document = self.query("Q3-instrument", {"symbol": "RELIANCE", "series": "EQ"})
         self.assertEqual(status, 200)
         rows = query_instrument(self.handle, self.index, "RELIANCE", "EQ")
-        self.assertEqual(len(rows), 3)
+        self.assertEqual(len(rows), 4)
         self.assertEqual(document["query"], {"query": "Q3-instrument", "result_count": len(rows), "rows": list(rows)})
         # raw_line is never served
         for row in document["query"]["rows"]:
