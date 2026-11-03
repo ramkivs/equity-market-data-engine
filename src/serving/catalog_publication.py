@@ -21,6 +21,7 @@ from .incremental_drafts import _validate
 from .index import load_index
 from .symbols import _identity, observed_trading_symbol
 from .w2_continuity import build_continuity
+from .composite_index import empty as empty_index_delta, file_metadata, compose as compose_index, extract as extract_index, validate as validate_index_delta
 from .composite_blobs import (put as put_blob, schema as blob_schema, validate_references,
                               validate_group_references, group_document, load_group_from_db, sha as blob_sha,
                               validate_override_references, override_document)
@@ -29,7 +30,8 @@ LEGACY_FORMAT_ID = 'catalog-composite/1.0'
 INLINE_GROUP_FORMAT_ID = 'catalog-composite/2.0'
 INLINE_OVERRIDE_FORMAT_ID = 'catalog-composite/3.0'
 INLINE_TICKER_FORMAT_ID = 'catalog-composite/4.0'
-FORMAT_ID = 'catalog-composite/5.0'
+INLINE_INDEX_FORMAT_ID = 'catalog-composite/5.0'
+FORMAT_ID = 'catalog-composite/6.0'
 MAX_PENDING_BYTES = 128 * 1024 * 1024
 MAX_PENDING_ROWS = 20000
 
@@ -163,26 +165,29 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                 if _sha(previous[1]) != previous[0]:
                     raise RegistryError('active composite digest mismatch')
                 payload = json.loads(previous[1])
-                if payload.get('format') not in (FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_GROUP_FORMAT_ID, LEGACY_FORMAT_ID, 'bounded-composite/1.0'):
+                if payload.get('format') not in (FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_GROUP_FORMAT_ID, LEGACY_FORMAT_ID, 'bounded-composite/1.0'):
                     raise RegistryError('unknown active composite format')
                 if payload.get('baseline_manifest_sha256') != baseline.manifest_digest or payload.get('baseline_index_sha256') != index_hash:
                     raise RegistryError('active composite baseline/index mismatch')
-                if payload.get('format') in (FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_GROUP_FORMAT_ID, LEGACY_FORMAT_ID) and payload.get('catalog_binding') != meta:
+                if payload.get('format') in (FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_GROUP_FORMAT_ID, LEGACY_FORMAT_ID) and payload.get('catalog_binding') != meta:
                     raise RegistryError('active composite catalog mismatch')
-                if payload.get('format') in (FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_GROUP_FORMAT_ID):
+                if payload.get('format') in (FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_GROUP_FORMAT_ID):
                     validate_references(payload)
-                if payload.get('format') in (FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID):
+                if payload.get('format') in (FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID):
                     validate_group_references(payload)
-                if payload.get('format') in (FORMAT_ID, INLINE_TICKER_FORMAT_ID):
+                if payload.get('format') in (FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID):
                     validate_override_references(payload)
-                if payload.get('format') == FORMAT_ID:
+                if payload.get('format') in (FORMAT_ID, INLINE_INDEX_FORMAT_ID):
                     validate_ticker_delta(payload.get('symbol_delta'))
+                if payload.get('format') == FORMAT_ID:
+                    validate_index_delta(payload.get('index_delta'), payload.get('candidates'))
             migrating = previous is not None and payload.get('format') == 'bounded-composite/1.0'
             migrate_blobs = previous is not None and payload.get('format') == LEGACY_FORMAT_ID
             migrate_groups = previous is not None and payload.get('format') in (LEGACY_FORMAT_ID, INLINE_GROUP_FORMAT_ID)
             migrate_overrides = previous is not None and payload.get('format') in (LEGACY_FORMAT_ID, INLINE_GROUP_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID)
             migrate_tickers = previous is not None and payload.get('format') in (LEGACY_FORMAT_ID, INLINE_GROUP_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_TICKER_FORMAT_ID)
-            if not staged and not migrating and not migrate_tickers:
+            migrate_index = previous is not None and payload.get('format') in (LEGACY_FORMAT_ID, INLINE_GROUP_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_INDEX_FORMAT_ID)
+            if not staged and not migrating and not migrate_index:
                 if previous is None:
                     raise RegistryError('no new records or prior generation')
                 db.commit()
@@ -255,6 +260,41 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                     raise RegistryError('inline ticker census disagrees with retained baseline and deltas')
                 payload.pop('symbol_catalog')
                 payload['symbol_delta'] = symbol_delta
+            if migrate_index:
+                old_delta_index = extract_index(index, payload['index'], payload['candidates'])
+                # One-time proof that every retained file fragment and flag
+                # count matches accepted, content-checked incremental rows.
+                from .composite_blobs import get as get_blob
+                rebuilt = empty_index_delta()
+                accepted = {}
+                for name, date, digest, text in db.execute('SELECT file_name,date,digest,record FROM accepted'):
+                    entry = json.loads(text)
+                    if entry.get('publication_kind') == 'composite':
+                        key = (name, date, digest)
+                        if (entry.get('file_name'), entry.get('date'), entry.get('digest')) != key:
+                            raise RegistryError('index migration accepted registry identity mismatch')
+                        accepted[key] = entry
+                if len(accepted) != len(payload['candidates']):
+                    raise RegistryError('index migration accepted registry census mismatch')
+                seen = set()
+                for rec in payload['candidates']:
+                    key = (rec['file_name'], rec['date'], rec['digest'])
+                    entry = accepted.get(key)
+                    if key in seen or entry is None or any(entry.get(k) != v for k, v in rec.items()):
+                        raise RegistryError('index migration accepted input mismatch')
+                    seen.add(key)
+                    source = 'incremental/' + rec['digest'] + '.rows.jsonl'
+                    rows_text = get_blob(db, payload['delta'][source])
+                    evidence_text = get_blob(db, payload['evidence'][rec['digest']])
+                    rows = _validate(rec, rows_text, evidence_text, baseline)
+                    metadata, flags = file_metadata(rec, rows)
+                    rebuilt['files'][source] = metadata
+                    for name, count in flags.items():
+                        rebuilt['flag_census'][name] = rebuilt['flag_census'].get(name, 0) + count
+                if rebuilt != old_delta_index:
+                    raise RegistryError('inline composite index disagrees with retained incremental rows')
+                payload.pop('index')
+                payload['index_delta'] = rebuilt
                 payload['format'] = FORMAT_ID
             if previous and payload.get('format') == FORMAT_ID:
                 validate_references(payload)
@@ -263,7 +303,7 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
             bounded = payload if migrating else None
             if previous and not migrating:
                 payload = copy.deepcopy(payload)
-                composite_index = payload['index']
+                index_delta = payload['index_delta']
                 old_delta_catalog = payload['symbol_delta']
             else:
                 if not any(rel == 'w2/associations.jsonl' for _, rel in baseline.manifest_entries):
@@ -272,7 +312,7 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                            'baseline_index_sha256': index_hash, 'catalog_binding': meta,
                            'w2_overrides': {}, 'b3_overrides': {}, 'w2_delta': {}, 'b2_delta': {},
                            'delta': {}, 'evidence': {}, 'candidates': []}
-                composite_index = copy.deepcopy(index)
+                index_delta = empty_index_delta()
                 old_delta_catalog = {'observations': []}
             # A bounded generation already embeds its accepted incremental
             # bytes. Rebuild only those deltas against the catalog; never read
@@ -326,25 +366,17 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
             affected_w2, affected_b2, added_tickers = set(), set(), set()
             new_w2, new_b2 = {}, {}
             def verify_carried_index():
-                composite_index['counts']['row_files'] = len(composite_index['files'])
-                composite_index['counts']['row_count'] = sum(f['row_count'] for f in composite_index['files'].values())
-                composite_index['counts']['instrument_pairs'] = len({tuple(p) for f in composite_index['files'].values() for p in f['instruments']})
-                if composite_index != bounded.get('index'):
+                carried_index = compose_index(index, index_delta, payload['candidates'])
+                if carried_index != bounded.get('index'):
                     raise RegistryError('bounded migration index disagrees with retained input evidence')
 
             for number, (rec, rows_text, evidence, rows) in enumerate(carried + new):
                 if migrating and number == len(carried):
                     verify_carried_index()
                 source = 'incremental/' + rec['digest'] + '.rows.jsonl'
-                pairs, flags = set(), {}
+                metadata, flags = file_metadata(rec, rows)
                 for row in rows:
                     values = row['source_values']
-                    pairs.add((values.get('listing_symbol') or '', values.get('series') or ''))
-                    for flag in row.get('flags', []):
-                        name = flag.get('name') if isinstance(flag, dict) else None
-                        if not isinstance(name, str) or not name:
-                            raise RegistryError('invalid staged flag')
-                        flags[name] = flags.get(name, 0) + 1
                     projected = _projection(row)
                     w2 = normalize_upper_trim(values.get('security_isin') or '')
                     b2 = _identity(row)
@@ -356,11 +388,9 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                     if ticker and isinstance(values.get('series'), str):
                         added_tickers.add((ticker, values['series']))
                     all_new.append((source, projected))
-                composite_index['files'][source] = {'family': rec['family'], 'year': rec['date'][:4], 'member_stem': rec['file_name'], 'row_count': len(rows), 'instruments': [list(p) for p in sorted(pairs)], 'business_date_min': rec['date'], 'business_date_max': rec['date']}
-                part = composite_index['partitions'].setdefault(rec['family'] + '/' + rec['date'][:4], {'family': rec['family'], 'year': rec['date'][:4], 'row_files': 0, 'row_count': 0})
-                part['row_files'] += 1; part['row_count'] += len(rows)
+                index_delta['files'][source] = metadata
                 for name, count in flags.items():
-                    composite_index['flag_census'][name] = composite_index['flag_census'].get(name, 0) + count
+                    index_delta['flag_census'][name] = index_delta['flag_census'].get(name, 0) + count
                 put_blob(db, rows_text, rec['rows_sha256'])
                 put_blob(db, evidence, rec['evidence_sha256'])
                 payload['delta'][source] = rec['rows_sha256']
@@ -400,13 +430,11 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                 text = _json(override_document('b3', identity, doc['identities']))
                 digest = blob_sha(text); put_blob(db, text, digest)
                 payload['b3_overrides'][identity] = digest
-            composite_index['counts']['row_files'] = len(composite_index['files'])
-            composite_index['counts']['row_count'] = sum(f['row_count'] for f in composite_index['files'].values())
-            composite_index['counts']['instrument_pairs'] = len({tuple(p) for f in composite_index['files'].values() for p in f['instruments']})
+            validate_index_delta(index_delta, payload['candidates'])
             validate_references(payload)
             validate_group_references(payload)
             validate_override_references(payload)
-            payload['index'] = composite_index
+            payload['index_delta'] = index_delta
             payload['symbol_delta'] = delta_catalog
             text = _json(payload); generation = _sha(text)
             if load_index(state, baseline)[1] != index_hash:
@@ -420,7 +448,7 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                 db.execute('INSERT INTO accepted VALUES (?,?,?,?)', (rec['file_name'], rec['date'], rec['digest'], _json(entry)))
             db.execute('INSERT INTO composite_active VALUES (1,?) ON CONFLICT(singleton) DO UPDATE SET generation=excluded.generation', (generation,))
             db.commit()
-            return {'status': 'PUBLISHED', 'generation': generation, 'new_inputs': len(new), 'migrated_bounded_generation': previous[0] if migrating else None, 'migrated_inline_generation': previous[0] if migrate_blobs else None, 'migrated_groups_generation': previous[0] if migrate_groups else None, 'migrated_overrides_generation': previous[0] if migrate_overrides else None, 'migrated_tickers_generation': previous[0] if migrate_tickers else None, 'row_count': composite_index['counts']['row_count']}
+            return {'status': 'PUBLISHED', 'generation': generation, 'new_inputs': len(new), 'migrated_bounded_generation': previous[0] if migrating else None, 'migrated_inline_generation': previous[0] if migrate_blobs else None, 'migrated_groups_generation': previous[0] if migrate_groups else None, 'migrated_overrides_generation': previous[0] if migrate_overrides else None, 'migrated_tickers_generation': previous[0] if migrate_tickers else None, 'migrated_index_generation': previous[0] if migrate_index else None, 'row_count': index['counts']['row_count'] + sum(f['row_count'] for f in index_delta['files'].values())}
         except (sqlite3.Error, ValueError, KeyError, TypeError) as exc:
             if isinstance(exc, RegistryError):
                 raise

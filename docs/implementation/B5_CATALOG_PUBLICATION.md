@@ -54,7 +54,7 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
 
 ## Scope limits — no B5 completion claim
 
-* Catalog-backed generation format 5 stores incremental canonical rows and
+* Catalog-backed generation format 6 stores incremental canonical rows and
   evidence once as content-addressed SQLite blobs. Later publications refer to
   existing blobs without reading or copying their contents. Readers verify each
   accessed blob against its generation-pinned digest; old blobs remain available
@@ -66,7 +66,9 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   their inline W2/B3 overrides, transactionally. Format-4 ticker snapshots
   migrate by streaming retained incremental blobs and verifying the reconstructed
   baseline-plus-delta census against the old snapshot; no old source archive or
-  historical canonical row is read.
+  historical canonical row is read. Format-5 generations migrate their inline
+  composite indexes to format 6 after checking the baseline portion and
+  reconstructing delta file metadata and flags from verified retained deltas.
 * W2 and B2 incremental projections are stored as content-addressed per-identity
   groups. Later publication reads and rewrites only groups affected by the new
   rows or ticker ambiguity; unaffected group contents are not copied or read.
@@ -82,12 +84,19 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   copy of the baseline census. Reader snapshots and publications reconstruct the
   merged census from the verified baseline catalog and the compact delta census.
   Ticker resolution and overlap/reuse ambiguity retain their existing semantics.
-* This is **not yet fully delta-only**: the baseline serving index, incremental
+* Generation JSON stores only incremental index file metadata and flag counts,
+  bound to the separately verified baseline index. Publication updates that
+  overlay without copying or recomposing the full baseline index. Readers
+  reconstruct the existing complete index contract (including partition and
+  distinct-instrument counts) from baseline metadata and the pinned overlay.
+* This is **not yet fully delta-only**: the incremental index file metadata,
   ticker census, candidate references, and identity-group and override reference
   maps remain together in each generation JSON. Publication still scans and
-  materializes the compact baseline ticker census, copies and serializes these
-  accumulated structures, and recomputes index summary counts. Very large or numerous deltas can still hit memory or
-  SQLite single-value limits. No scalable long-running lifecycle is established.
+  materializes the compact baseline ticker census and copies/serializes these
+  accumulated structures. Readers still compose and scan the complete index
+  metadata, though neither path rereads historical canonical rows for this
+  work. Very large or numerous deltas can still hit memory or SQLite
+  single-value limits. No scalable long-running lifecycle is established.
 * The original qualified historical canonical baseline is not reread during
   catalog-backed publication. Q3/Q4 still scan candidate historical row files
   to serve a query, and Q5 streams the original W2 association file; these are
@@ -144,7 +153,7 @@ This exceeds the former total 20,000-row guard, but is **not** an M2-scale test
 or a resource claim for approximately 5.7 million rows. No qualified M2 data was
 accessed or modified, and no historical archive was ingested.
 
-Linux disposable-fixture suite: **1051 tests run, 14 skipped**; existing
+Linux disposable-fixture suite: **1055 tests run, 14 skipped**; existing
 unrelated ResourceWarnings remain. Windows validation remains pending.
 
 The scoped-reader tests exercise calendar gap/holiday preservation, UDiFF date
@@ -191,3 +200,9 @@ a complete small synthetic fixture, normal publication without old delta blob or
 historical canonical reads, pinned census behavior, format-4 migration and
 rollback, and corruption checks. Migration tests emulate old generation formats
 in disposable SQLite state; they do not use or prove behavior on qualified M2.
+
+`tests/test_b5_index_overlay.py` covers selected index/count parity, ordinary
+publication without composing or reading baseline canonical rows, pinned
+readers, malformed overlays, and transactional format-5 migration with source
+archives absent and corrupt flag evidence. Old formats are simulated in
+disposable SQLite state; this is not an M2-scale resource validation.

@@ -32,6 +32,7 @@ class DetachedDeltaTests(unittest.TestCase):
         payload['b2_delta'] = dict(payload['b2_delta'])
         payload['w2_overrides'] = dict(payload['w2_overrides'])
         payload['b3_overrides'] = dict(payload['b3_overrides'])
+        payload.pop('index_delta')
         payload.pop('symbol_delta')
         payload['format'] = 'catalog-composite/1.0'
         text = _json(payload); generation = _sha(text)
