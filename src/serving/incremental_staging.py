@@ -1,7 +1,7 @@
 """Validate and durably stage a single new archive, without publishing it.
 
 Staging is intentionally not acceptance: no staged candidate is part of Q1–Q10
-or the processed registry until a future atomic composite-publication path exists.
+or the processed registry until atomic composite publication succeeds.
 """
 import hashlib
 import importlib.util
@@ -64,6 +64,9 @@ def prepare(baseline, registry_root, state, saved, history, source_roots, root, 
     try:
         db.execute('BEGIN IMMEDIATE')
         _schema(db)
+        from .pending_queue import installed, verify
+        if installed(db):
+            verify(db)
         old = db.execute('SELECT digest,record FROM staged_candidates WHERE file_name=? AND date=?', (result['file_name'], date)).fetchone()
         duplicate = db.execute('SELECT file_name,date FROM staged_candidates WHERE digest=?', (result['sha256'],)).fetchone()
         if old:
@@ -131,6 +134,10 @@ def prepare(baseline, registry_root, state, saved, history, source_roots, root, 
         db.execute('PRAGMA synchronous=FULL')
         db.execute('BEGIN IMMEDIATE')
         _schema(db)
+        from .pending_queue import installed, verify, seal
+        queue_installed = installed(db)
+        if queue_installed:
+            verify(db)
         # Recheck all predicates in the same transaction as staging. Never
         # overwrite either accepted or staged entries, including concurrent runs.
         if db.execute('SELECT 1 FROM accepted WHERE (file_name=? AND date=?) OR digest=? OR date=? LIMIT 1',
@@ -141,6 +148,8 @@ def prepare(baseline, registry_root, state, saved, history, source_roots, root, 
             raise RegistryError('candidate was staged concurrently; retry for its state')
         db.execute('INSERT INTO staged_candidates VALUES (?,?,?,?,?,?)',
                    (record['file_name'], date, record['digest'], _json(record), rows, evidence))
+        if queue_installed:
+            seal(db)
         db.commit()
     except sqlite3.IntegrityError as exc:
         raise RegistryError('staging collision: %s' % exc) from exc

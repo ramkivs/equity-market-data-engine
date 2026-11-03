@@ -193,12 +193,26 @@ def _validated_groups(db, meta):
     return groups
 
 
-def observations_for_identity(db, identity, kind='w2'):
+class _PinnedIdentityManifest:
+    def __init__(self, db, groups):
+        self.db = db
+        self.groups = groups
+
+
+def _pin_identity_manifest(db, meta):
+    if not db.in_transaction or _metadata(db) != meta:
+        raise CatalogError('identity manifest requires the bound read transaction')
+    return _PinnedIdentityManifest(db, _validated_groups(db, meta))
+
+
+def observations_for_identity(db, identity, kind='w2', pinned_groups=None):
     """Verify a compact group manifest and only the selected identity rows.
 
     Row hashes alone cannot detect a corrupt key that hides a row. The separate
     authenticated count and group digest detect omitted or miskeyed rows. A
-    read transaction pins both the group manifest and observations.
+    read transaction pins both the group manifest and observations. A caller
+    already holding that transaction can pass a previously verified manifest to
+    reuse it across affected identities without rescanning the census.
     """
     column = {'w2': 'w2_identity', 'b2': 'b2_identity'}.get(kind)
     if column is None or not isinstance(identity, str) or not identity:
@@ -207,8 +221,13 @@ def observations_for_identity(db, identity, kind='w2'):
     try:
         if started:
             db.execute('BEGIN')
-        meta = _metadata(db)
-        expected = _validated_groups(db, meta).get((kind, identity))
+        if pinned_groups is not None:
+            if started or not isinstance(pinned_groups, _PinnedIdentityManifest) or pinned_groups.db is not db:
+                raise CatalogError('pinned identity manifest requires its existing read transaction')
+            expected = pinned_groups.groups.get((kind, identity))
+        else:
+            meta = _metadata(db)
+            expected = _validated_groups(db, meta).get((kind, identity))
         digest = hashlib.sha256()
         result = []
         for item in db.execute('SELECT * FROM observations WHERE ' + column + '=? ORDER BY ordinal', (identity,)):

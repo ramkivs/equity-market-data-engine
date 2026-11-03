@@ -98,7 +98,10 @@ def _open(baseline, path):
         raise RegistryError('registry missing or unsafe; initialize explicitly')
     db = sqlite3.connect('file:' + quote(path, safe='/') + '?mode=rw', uri=True)
     try:
-        meta = {k: json.loads(v) for k, v in db.execute('SELECT key,value FROM meta')}
+        # The independently sealed, rebuildable pending-index metadata is
+        # verified by pending_queue, not required to open the accepted registry.
+        # This also permits explicit recovery if its JSON alone is damaged.
+        meta = {k: json.loads(v) for k, v in db.execute("SELECT key,value FROM meta WHERE key NOT GLOB 'publication_pending_*'")}
         if meta.get('format') != FORMAT or meta.get('manifest_sha256') != baseline.manifest_digest or meta.get('bindings') != bindings(baseline):
             raise RegistryError('registry does not match verified baseline and version bindings')
         return db, meta
@@ -187,11 +190,12 @@ def main(argv=None):
     sub.add_parser('bind', help='validate and bind an explicitly configured existing registry; never replace data')
     sub.add_parser('bootstrap', help='one-time baseline continuity catalog bootstrap')
     sub.add_parser('catalog-verify', help='fully verify the baseline continuity catalog and any ticker proofs')
+    sub.add_parser('pending-index-recover', help='validate the registry and explicitly rebuild the derived pending index')
     sub.add_parser('ticker-proof-recover', help='explicitly verify or restore missing bound ticker proofs without replacing existing files')
     sub.add_parser('catalog-upgrade', help='upgrade a verified continuity catalog with identity proofs')
     sub.add_parser('conflicts', help='list durable unresolved findings')
     sub.add_parser('staged', help='list validated candidates that are not published')
-    sub.add_parser('publish', help='publish a bounded Q1-Q5 composite generation')
+    sub.add_parser('publish', help='publish a selected composite generation')
     sub.add_parser('draft', help='capture an isolated, non-serveable draft snapshot')
     sub.add_parser('drafts', help='list non-serveable draft snapshots')
     stage = sub.add_parser('prepare', help='validate and stage a candidate; does not publish')
@@ -222,6 +226,10 @@ def main(argv=None):
         elif args.operation == 'bootstrap':
             from .continuity_catalog import bootstrap
             result = bootstrap(base, args.state, args.registry, args.saved_state, args.history_state, common[-1])
+        elif args.operation == 'pending-index-recover':
+            from .composite_binding import validate_registry
+            _db_path(base, args.registry, args.state, args.saved_state, args.history_state, common[-1])
+            result = validate_registry(base, args.state, args.registry, recover_pending=True)
         elif args.operation == 'ticker-proof-recover':
             from .ticker_proofs import recover
             result = recover(base, args.state, args.registry, args.saved_state, args.history_state, common[-1])

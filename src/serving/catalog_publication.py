@@ -13,7 +13,7 @@ import sqlite3
 from nse_engine import DEFAULT_CONFIG
 from nse_engine.compact import normalize_upper_trim
 from .baseline import sha256_file
-from .continuity_catalog import FORMAT, _metadata, _projection, observations_for_identity, open_catalog, ticker_catalog
+from .continuity_catalog import FORMAT, _metadata, _projection, _pin_identity_manifest, observations_for_identity, open_catalog, ticker_catalog
 from .incremental_registry import RegistryError, _db_path, _json, _open, bindings, inspect
 from .incremental_staging import _candidate_path
 from . import incremental_staging
@@ -117,15 +117,18 @@ def merge_ticker_catalogs(base, delta):
 
 
 def _pending(db):
-    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='staged_candidates'").fetchone():
-        raise RegistryError('no staged candidates')
-    if db.execute('SELECT 1 FROM staged_candidates s JOIN accepted a ON a.file_name=s.file_name AND a.date=s.date WHERE s.digest<>a.digest LIMIT 1').fetchone():
+    from .pending_queue import verify
+    verify(db)
+    if db.execute("SELECT 1 FROM publication_pending WHERE state='conflict' LIMIT 1").fetchone():
         raise RegistryError('staged content disagrees with accepted input identity')
-    predicate = " FROM staged_candidates s LEFT JOIN accepted a ON a.file_name=s.file_name AND a.date=s.date WHERE a.file_name IS NULL"
+    predicate = (" FROM publication_pending q LEFT JOIN staged_candidates s ON s.file_name=q.file_name AND s.date=q.date "
+                 "LEFT JOIN accepted a ON a.file_name=q.file_name AND a.date=q.date WHERE q.state='pending'")
+    if db.execute("SELECT 1" + predicate + " AND (s.file_name IS NULL OR s.digest<>q.digest OR a.file_name IS NOT NULL) LIMIT 1").fetchone():
+        raise RegistryError('publication pending index disagrees with retained registry records')
     size = db.execute('SELECT COALESCE(sum(length(CAST(s.record AS BLOB))+length(CAST(s.rows AS BLOB))+length(CAST(s.evidence AS BLOB))),0)' + predicate).fetchone()[0]
     if size > MAX_PENDING_BYTES:
         raise RegistryError('pending publication byte limit exceeded')
-    return db.execute('SELECT s.record,s.rows,s.evidence' + predicate + ' ORDER BY s.file_name,s.date,s.digest').fetchall()
+    return db.execute('SELECT s.record,s.rows,s.evidence' + predicate + ' ORDER BY q.file_name,q.date,q.digest').fetchall()
 
 
 def publish(baseline, registry_root, state, saved, history, source_roots):
@@ -147,6 +150,9 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
         base_catalog = None
         preview, _ = _open(baseline, path)
         try:
+            from .pending_queue import ensure as ensure_pending_queue
+            ensure_pending_queue(preview)
+            preview.execute('BEGIN')
             staged = _pending(preview)
             active_exists = preview.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='composite_active'").fetchone()
             active_row = preview.execute('SELECT a.generation,g.payload FROM composite_active a LEFT JOIN composite_generations g ON g.id=a.generation WHERE a.singleton=1').fetchone() if active_exists else None
@@ -157,8 +163,11 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
             preview.close()
         if prior_format in (FORMAT_ID, INLINE_CANDIDATE_FORMAT_ID, INLINE_TICKER_TREE_FORMAT_ID, INLINE_DERIVED_FORMAT_ID, INLINE_REFERENCE_FORMAT_ID, INLINE_INDEX_TREE_FORMAT_ID) and not os.path.lexists(os.path.join(state, PROOF_FILE)):
             raise RegistryError('ticker lookup proofs missing; explicit recovery required')
-        proof_meta = build_ticker_proofs(baseline, state, cat, meta)
-        proof_db, _, proof_groups = open_proofs(state, meta, proof_meta)
+        if os.path.lexists(os.path.join(state, PROOF_FILE)):
+            proof_db, proof_meta, proof_groups = open_proofs(state, meta)
+        else:
+            proof_meta = build_ticker_proofs(baseline, state, cat, meta)
+            proof_db, _, proof_groups = open_proofs(state, meta, proof_meta)
         for text, _, _ in staged:
             rec = json.loads(text)
             finding = inspect(baseline, registry_root, state, saved, history, source_roots,
@@ -514,15 +523,16 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                     groups[identity] = digest
                 return [(src, row) for src, row in rows]
 
+            pinned_identity_groups = _pin_identity_manifest(cat, meta) if affected_w2 or affected_b2 else None
             for identity in sorted(affected_w2):
-                baseline_rows = list(observations_for_identity(cat, identity, 'w2'))
+                baseline_rows = list(observations_for_identity(cat, identity, 'w2', pinned_groups=pinned_identity_groups))
                 delta_rows = affected_group('w2', identity, new_w2.get(identity, []))
                 docs = _w2([('affected', [row for _, row in baseline_rows + delta_rows])])
                 text = _json(override_document('w2', identity, docs[0] if docs else None))
                 digest = blob_sha(text); put_blob(db, text, digest)
                 payload['w2_overrides'][identity] = digest
             for identity in sorted(affected_b2):
-                base_rows = list(observations_for_identity(cat, identity, 'b2'))
+                base_rows = list(observations_for_identity(cat, identity, 'b2', pinned_groups=pinned_identity_groups))
                 delta_rows = affected_group('b2', identity, new_b2.get(identity, []))
                 doc = build_continuity(base_rows + delta_rows, baseline.manifest_digest, catalog_override=catalog)
                 text = _json(override_document('b3', identity, doc['identities']))
@@ -546,6 +556,8 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                 entry = dict(rec, date_from_filename=rec['date'], archive_sha256_observed_raw_bytes=rec['digest'],
                              partition=rec['family'] + '/' + rec['date'][:4], publication_kind='composite', generation=generation)
                 db.execute('INSERT INTO accepted VALUES (?,?,?,?)', (rec['file_name'], rec['date'], rec['digest'], _json(entry)))
+            from .pending_queue import seal as seal_pending_queue
+            seal_pending_queue(db)
             db.execute('INSERT INTO composite_active VALUES (1,?) ON CONFLICT(singleton) DO UPDATE SET generation=excluded.generation', (generation,))
             db.commit()
             return {'status': 'PUBLISHED', 'generation': generation, 'new_inputs': len(new), 'migrated_bounded_generation': previous[0] if migrating else None, 'migrated_inline_generation': previous[0] if migrate_blobs else None, 'migrated_groups_generation': previous[0] if migrate_groups else None, 'migrated_overrides_generation': previous[0] if migrate_overrides else None, 'migrated_tickers_generation': previous[0] if migrate_tickers else None, 'migrated_index_generation': previous[0] if migrate_index else None, 'migrated_ticker_proofs_generation': previous[0] if migrate_proofs else None, 'migrated_index_tree_generation': previous[0] if migrate_tree else None, 'migrated_references_generation': previous[0] if migrate_references else None, 'migrated_derived_references_generation': previous[0] if migrate_derived else None, 'migrated_ticker_trees_generation': previous[0] if migrate_ticker_trees else None, 'migrated_candidates_generation': previous[0] if migrate_candidates else None, 'row_count': index['counts']['row_count'] + index_tree['row_count']}

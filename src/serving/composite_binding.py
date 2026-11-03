@@ -47,7 +47,7 @@ def validate_inline_payload(db, baseline, payload):
         raise ValueError('inline generation evidence census mismatch')
 
 
-def validate_registry(baseline, state_root, registry_root):
+def validate_registry(baseline, state_root, registry_root, recover_pending=False):
     """Validate an explicitly identified registry without modifying its data.
 
     Checks baseline manifest and retained staged/published evidence, not source
@@ -62,6 +62,9 @@ def validate_registry(baseline, state_root, registry_root):
     try:
         db, _ = _open(baseline, path)
         db.execute('BEGIN IMMEDIATE')
+        from .pending_queue import installed as pending_installed, verify as verify_pending
+        if not recover_pending and pending_installed(db):
+            verify_pending(db)
         expected = {(r['file_name'], r['date_from_filename'], r['archive_sha256_observed_raw_bytes']): r
                     for r in _manifest_entries(baseline)}
         accepted = {}
@@ -136,7 +139,11 @@ def validate_registry(baseline, state_root, registry_root):
                 if list(derived_tickers['observations']) != list(actual_tickers):
                     raise ValueError('ticker delta trees disagree with retained incremental rows')
             generation = selected.manifest_digest
-        return {'generation': generation, 'accepted_incremental': len(accepted), 'staged': staged_count}
+        if recover_pending:
+            from .pending_queue import recover as recover_pending_index
+            recover_pending_index(db)
+            db.commit()
+        return {'generation': generation, 'accepted_incremental': len(accepted), 'staged': staged_count, **({'pending_index': 'RECOVERED'} if recover_pending else {})}
     except Exception as exc:
         raise QueryError('composite-unavailable', 'cannot bind explicitly configured registry: %s' % exc) from exc
     finally:

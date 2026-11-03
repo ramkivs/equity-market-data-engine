@@ -124,10 +124,21 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   copied into each generation JSON. Publication appends new records by changing
   only their paths; selected readers traverse and validate the full candidate
   tree and retain the existing ordered-list reader contract.
+* A one-time, transactional pending-index bootstrap classifies retained staged
+  records against the accepted registry, without deleting either. Afterward,
+  publication scans only pending/conflicting queue entries, with date indexes for
+  accepted/staged lookups. Triggers and a digest/nonce seal detect missing queue
+  entries and unsealed external mutations. `pending-index-recover`, with the
+  complete existing registry arguments, first fully validates the known registry
+  and then explicitly rebuilds this derived index without replacing user records
+  or unknown schema. Interrupted stage/publication transactions retain their
+  previous seal. Older software that writes staged or accepted identity records
+  without sealing the index will cause publication to fail closed until recovery.
 * This is **not yet fully delta-only**: publication still validates and scans the
-  compact baseline ticker-group manifest and consults accumulated staged and
-  accepted registry metadata. Affected ticker/identity groups can grow without
-  bound and are rewritten as whole groups. Readers still compose and scan the complete index metadata, though
+  compact baseline ticker-group manifest once per publication and the identity
+  group manifest once when identities are affected; it also loads the baseline
+  serving index. Affected
+  ticker/identity groups can grow without bound and are rewritten as whole groups. Readers still compose and scan the complete index metadata, though
   neither path rereads historical canonical rows for this work. Very large or numerous deltas can still hit memory or SQLite
   single-value limits. No scalable long-running lifecycle is established.
 * The original qualified historical canonical baseline is not reread during
@@ -186,7 +197,7 @@ This exceeds the former total 20,000-row guard, but is **not** an M2-scale test
 or a resource claim for approximately 5.7 million rows. No qualified M2 data was
 accessed or modified, and no historical archive was ingested.
 
-Linux disposable-fixture suite: **1091 tests run, 14 skipped**; existing
+Linux disposable-fixture suite: **1102 tests run, 14 skipped**; existing
 unrelated ResourceWarnings remain. Windows validation remains pending.
 
 The scoped-reader tests exercise calendar gap/holiday preservation, UDiFF date
@@ -276,3 +287,12 @@ pinned roots, ordinary publication with full old-tree traversal blocked,
 selected corruption, accepted/index mismatch, and format-11 migration with
 rollback/retry. Selected readers still materialize all candidates and multiple
 reference trees; no bounded-startup or completed-lifecycle claim is made.
+
+`tests/test_b5_lifecycle_e2e.py` exercises six synthetic publications over
+multiple dates, an interrupted pointer switch and retry, an unresolved D21
+change, Q1–Q10, saved/history, missing-proof recovery, explicit binding repair,
+and an application process restart after accepted archives are removed.
+`tests/test_b5_pending_queue.py` covers one-time bootstrap/rollback, indexed
+pending selection, seals, corruption and explicit validated recovery. This is
+a small Linux disposable lifecycle, not qualified M2, a long-duration scale
+proof, or Windows validation.

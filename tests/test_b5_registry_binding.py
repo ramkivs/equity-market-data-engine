@@ -84,10 +84,16 @@ class RegistryBindingTests(unittest.TestCase):
             db.execute("UPDATE staged_candidates SET rows='broken' WHERE file_name='later.zip'")
         failed = subprocess.run(cmd, env=env, text=True, capture_output=True, timeout=20)
         self.assertNotEqual(failed.returncode, 0)
-        self.assertIn('digest mismatch', json.loads(failed.stdout)['detail'])
+        self.assertIn('pending index is missing or unsealed', json.loads(failed.stdout)['detail'])
+        repair = cmd[:-1] + ['pending-index-recover']
+        damaged_repair = subprocess.run(repair, env=env, text=True, capture_output=True, timeout=20)
+        self.assertNotEqual(damaged_repair.returncode, 0)
+        self.assertIn('digest mismatch', json.loads(damaged_repair.stdout)['detail'])
         self.assertFalse(Path(self.args[2], 'composite_registry.json').exists())
         with sqlite3.connect(path) as db:
             db.execute("UPDATE staged_candidates SET rows=? WHERE file_name='later.zip'", (text,))
+        repaired = subprocess.run(repair, env=env, text=True, capture_output=True, timeout=20)
+        self.assertEqual(repaired.returncode, 0, repaired.stdout + repaired.stderr)
         result = subprocess.run(cmd, env=env, text=True, capture_output=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(json.loads(result.stdout)['data']['staged'], 2)

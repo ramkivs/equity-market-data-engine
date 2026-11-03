@@ -43,6 +43,29 @@ class CatalogProofTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_pinned_manifest_reused_only_in_its_open_read_transaction(self):
+        import serving.continuity_catalog as catalog
+        self.build()
+        db, meta = open_catalog(self.baseline, self.args[2])
+        other, _ = open_catalog(self.baseline, self.args[2])
+        try:
+            with self.assertRaisesRegex(CatalogError, 'requires the bound read transaction'):
+                catalog._pin_identity_manifest(db, meta)
+            db.execute('BEGIN'); other.execute('BEGIN')
+            with mock.patch.object(catalog, '_validated_groups', wraps=catalog._validated_groups) as validate:
+                pinned = catalog._pin_identity_manifest(db, meta)
+                self.assertGreater(len(list(observations_for_identity(db, 'INE002A01018', 'w2', pinned_groups=pinned))), 0)
+                self.assertGreater(len(list(observations_for_identity(db, 'INE002A01018', 'b2', pinned_groups=pinned))), 0)
+                self.assertEqual(list(observations_for_identity(db, 'MISSING', 'w2', pinned_groups=pinned)), [])
+                self.assertEqual(validate.call_count, 1)
+            with self.assertRaisesRegex(CatalogError, 'existing read transaction'):
+                list(observations_for_identity(other, 'INE002A01018', 'w2', pinned_groups=pinned))
+            db.rollback()
+            with self.assertRaisesRegex(CatalogError, 'existing read transaction'):
+                list(observations_for_identity(db, 'INE002A01018', 'w2', pinned_groups=pinned))
+        finally:
+            db.close(); other.close()
+
     def test_miskeyed_row_cannot_disappear_silently(self):
         self.build()
         path = Path(self.args[2], FILENAME)
