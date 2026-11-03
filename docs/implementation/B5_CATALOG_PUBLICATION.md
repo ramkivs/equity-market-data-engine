@@ -54,7 +54,7 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
 
 ## Scope limits — no B5 completion claim
 
-* Catalog-backed generation format 12 stores incremental canonical rows and
+* Catalog-backed generation format 13 stores incremental canonical rows and
   evidence once as content-addressed SQLite blobs. Later publications refer to
   existing blobs without reading or copying their contents. Readers verify each
   accessed blob against its generation-pinned digest; old blobs remain available
@@ -80,8 +80,21 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   trie roots. Format-10 incremental ticker censuses migrate to ticker/series,
   identity/series, and ticker-directory trees. Format-11 candidate lists migrate
   to an ordinal-keyed immutable tree after cross-checking accepted records,
-  retained row/evidence references and incremental index metadata. Migration
-  does not reread historical canonical data or prior source archives.
+  retained row/evidence references and incremental index metadata. Format-12
+  baseline identity manifests migrate to a balanced, immutable proof tree after
+  one full compact-manifest verification. Migration does not reread historical
+  canonical data or prior source archives.
+* Baseline W2/B2 identity-group proofs are stored in a generation-pinned,
+  content-addressed balanced search tree built once from the verified catalog
+  group manifest. Ordinary publication and unaffected Q5/B3 reads verify only
+  the selected search paths and observation groups, without rescanning the
+  baseline identity-group manifest. Explicit registry binding verifies the full
+  proof tree against that manifest; `catalog-verify` separately verifies the
+  complete catalog observations. Prior proof roots stay available to pinned
+  readers. One node is stored per baseline identity group during bootstrap.
+  `identity-proof-recover` can explicitly reconstruct missing nodes from the
+  verified compact manifest only when the resulting root matches the active
+  generation; it never overwrites existing corrupt content.
 * W2 and B2 incremental projections are stored as content-addressed per-identity
   groups. Later publication reads and rewrites only groups affected by the new
   rows or ticker ambiguity; unaffected group contents are not copied or read.
@@ -135,9 +148,8 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   previous seal. Older software that writes staged or accepted identity records
   without sealing the index will cause publication to fail closed until recovery.
 * This is **not yet fully delta-only**: publication still validates and scans the
-  compact baseline ticker-group manifest once per publication and the identity
-  group manifest once when identities are affected; it also loads the baseline
-  serving index. Affected
+  compact baseline ticker-group manifest once per publication and loads the
+  baseline serving index. Affected
   ticker/identity groups can grow without bound and are rewritten as whole groups. Readers still compose and scan the complete index metadata, though
   neither path rereads historical canonical rows for this work. Very large or numerous deltas can still hit memory or SQLite
   single-value limits. No scalable long-running lifecycle is established.
@@ -197,7 +209,7 @@ This exceeds the former total 20,000-row guard, but is **not** an M2-scale test
 or a resource claim for approximately 5.7 million rows. No qualified M2 data was
 accessed or modified, and no historical archive was ingested.
 
-Linux disposable-fixture suite: **1102 tests run, 14 skipped**; existing
+Linux disposable-fixture suite: **1113 tests run, 14 skipped**; existing
 unrelated ResourceWarnings remain. Windows validation remains pending.
 
 The scoped-reader tests exercise calendar gap/holiday preservation, UDiFF date
@@ -296,3 +308,9 @@ and an application process restart after accepted archives are removed.
 pending selection, seals, corruption and explicit validated recovery. This is
 a small Linux disposable lifecycle, not qualified M2, a long-duration scale
 proof, or Windows validation.
+
+`tests/test_b5_identity_proof_tree.py` exercises balanced logarithmic lookup,
+no full identity manifest scan during ordinary publication or unaffected Q5,
+selected versus unrelated corruption, explicit full tree verification, and
+transactional format-12 migration with rollback and pinned readers. Bootstrap
+reads the existing compact group manifest once, not historical canonical rows.

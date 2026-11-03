@@ -28,6 +28,7 @@ class DerivedReferenceTreesTests(unittest.TestCase):
         p = dict(selected[0].payload)
         for name in ('delta', 'evidence') + DERIVED_NAMES:
             p[name] = dict(p[name].references)
+        p.pop('identity_proof_tree')
         p.pop('candidate_tree')
         p.pop('ticker_trees')
         p['symbol_delta'] = {'observations': p['symbol_delta']['observations']}

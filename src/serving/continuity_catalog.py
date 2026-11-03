@@ -205,6 +205,14 @@ def _pin_identity_manifest(db, meta):
     return _PinnedIdentityManifest(db, _validated_groups(db, meta))
 
 
+def _pin_indexed_identity_manifest(db, meta, tree):
+    from .identity_proof_tree import IdentityProofTree, validate_header
+    if not db.in_transaction or _metadata(db) != meta or not isinstance(tree, IdentityProofTree):
+        raise CatalogError('indexed identity proof requires bound transactions')
+    validate_header(tree.header, meta)
+    return _PinnedIdentityManifest(db, tree)
+
+
 def observations_for_identity(db, identity, kind='w2', pinned_groups=None):
     """Verify a compact group manifest and only the selected identity rows.
 

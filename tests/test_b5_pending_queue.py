@@ -64,7 +64,7 @@ class PendingQueueTests(unittest.TestCase):
              mock.patch.object(catalog, '_validated_groups', wraps=catalog._validated_groups) as identity_manifest:
             self.assertEqual(publish(*self.args)['new_inputs'], 1)
         self.assertEqual(ticker_manifest.call_count, 1)
-        self.assertEqual(identity_manifest.call_count, 1)
+        self.assertEqual(identity_manifest.call_count, 0)
 
     def test_interrupted_bootstrap_rolls_back_and_retries(self):
         self.init()

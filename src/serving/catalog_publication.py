@@ -13,7 +13,7 @@ import sqlite3
 from nse_engine import DEFAULT_CONFIG
 from nse_engine.compact import normalize_upper_trim
 from .baseline import sha256_file
-from .continuity_catalog import FORMAT, _metadata, _projection, _pin_identity_manifest, observations_for_identity, open_catalog, ticker_catalog
+from .continuity_catalog import FORMAT, _metadata, _projection, _pin_indexed_identity_manifest, observations_for_identity, open_catalog, ticker_catalog
 from .incremental_registry import RegistryError, _db_path, _json, _open, bindings, inspect
 from .incremental_staging import _candidate_path
 from . import incremental_staging
@@ -41,7 +41,8 @@ INLINE_REFERENCE_FORMAT_ID = 'catalog-composite/8.0'
 INLINE_DERIVED_FORMAT_ID = 'catalog-composite/9.0'
 INLINE_TICKER_TREE_FORMAT_ID = 'catalog-composite/10.0'
 INLINE_CANDIDATE_FORMAT_ID = 'catalog-composite/11.0'
-FORMAT_ID = 'catalog-composite/12.0'
+INLINE_IDENTITY_PROOF_FORMAT_ID = 'catalog-composite/12.0'
+FORMAT_ID = 'catalog-composite/13.0'
 MAX_PENDING_BYTES = 128 * 1024 * 1024
 MAX_PENDING_ROWS = 20000
 
@@ -161,7 +162,7 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
             prior_format = json.loads(active_row[1]).get('format') if active_row else None
         finally:
             preview.close()
-        if prior_format in (FORMAT_ID, INLINE_CANDIDATE_FORMAT_ID, INLINE_TICKER_TREE_FORMAT_ID, INLINE_DERIVED_FORMAT_ID, INLINE_REFERENCE_FORMAT_ID, INLINE_INDEX_TREE_FORMAT_ID) and not os.path.lexists(os.path.join(state, PROOF_FILE)):
+        if prior_format in (FORMAT_ID, INLINE_IDENTITY_PROOF_FORMAT_ID, INLINE_CANDIDATE_FORMAT_ID, INLINE_TICKER_TREE_FORMAT_ID, INLINE_DERIVED_FORMAT_ID, INLINE_REFERENCE_FORMAT_ID, INLINE_INDEX_TREE_FORMAT_ID) and not os.path.lexists(os.path.join(state, PROOF_FILE)):
             raise RegistryError('ticker lookup proofs missing; explicit recovery required')
         if os.path.lexists(os.path.join(state, PROOF_FILE)):
             proof_db, proof_meta, proof_groups = open_proofs(state, meta)
@@ -195,21 +196,24 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                 if _sha(previous[1]) != previous[0]:
                     raise RegistryError('active composite digest mismatch')
                 payload = json.loads(previous[1])
-                if payload.get('format') not in (FORMAT_ID, INLINE_CANDIDATE_FORMAT_ID, INLINE_TICKER_TREE_FORMAT_ID, INLINE_DERIVED_FORMAT_ID, INLINE_REFERENCE_FORMAT_ID, INLINE_INDEX_TREE_FORMAT_ID, NO_TICKER_PROOF_FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_GROUP_FORMAT_ID, LEGACY_FORMAT_ID, 'bounded-composite/1.0'):
+                if payload.get('format') not in (FORMAT_ID, INLINE_IDENTITY_PROOF_FORMAT_ID, INLINE_CANDIDATE_FORMAT_ID, INLINE_TICKER_TREE_FORMAT_ID, INLINE_DERIVED_FORMAT_ID, INLINE_REFERENCE_FORMAT_ID, INLINE_INDEX_TREE_FORMAT_ID, NO_TICKER_PROOF_FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_GROUP_FORMAT_ID, LEGACY_FORMAT_ID, 'bounded-composite/1.0'):
                     raise RegistryError('unknown active composite format')
                 if payload.get('baseline_manifest_sha256') != baseline.manifest_digest or payload.get('baseline_index_sha256') != index_hash:
                     raise RegistryError('active composite baseline/index mismatch')
-                if payload.get('format') in (FORMAT_ID, INLINE_CANDIDATE_FORMAT_ID, INLINE_TICKER_TREE_FORMAT_ID, INLINE_DERIVED_FORMAT_ID, INLINE_REFERENCE_FORMAT_ID, INLINE_INDEX_TREE_FORMAT_ID, NO_TICKER_PROOF_FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_GROUP_FORMAT_ID, LEGACY_FORMAT_ID) and payload.get('catalog_binding') != meta:
+                if payload.get('format') in (FORMAT_ID, INLINE_IDENTITY_PROOF_FORMAT_ID, INLINE_CANDIDATE_FORMAT_ID, INLINE_TICKER_TREE_FORMAT_ID, INLINE_DERIVED_FORMAT_ID, INLINE_REFERENCE_FORMAT_ID, INLINE_INDEX_TREE_FORMAT_ID, NO_TICKER_PROOF_FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_GROUP_FORMAT_ID, LEGACY_FORMAT_ID) and payload.get('catalog_binding') != meta:
                     raise RegistryError('active composite catalog mismatch')
                 if payload.get('format') in (INLINE_REFERENCE_FORMAT_ID, INLINE_INDEX_TREE_FORMAT_ID, NO_TICKER_PROOF_FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_GROUP_FORMAT_ID):
                     validate_references(payload)
                 if payload.get('format') == FORMAT_ID:
+                    from .identity_proof_tree import validate_header as validate_identity_proof_header
+                    validate_identity_proof_header(payload.get('identity_proof_tree'), meta)
+                if payload.get('format') in (FORMAT_ID, INLINE_IDENTITY_PROOF_FORMAT_ID):
                     from .candidate_tree import validate_header as validate_candidate_header
                     validate_candidate_header(payload.get('candidate_tree'))
-                candidate_census = payload['candidate_tree']['count'] if payload.get('format') == FORMAT_ID else payload.get('candidates')
-                if payload.get('format') in (FORMAT_ID, INLINE_CANDIDATE_FORMAT_ID, INLINE_TICKER_TREE_FORMAT_ID, INLINE_DERIVED_FORMAT_ID):
+                candidate_census = payload['candidate_tree']['count'] if payload.get('format') in (FORMAT_ID, INLINE_IDENTITY_PROOF_FORMAT_ID) else payload.get('candidates')
+                if payload.get('format') in (FORMAT_ID, INLINE_IDENTITY_PROOF_FORMAT_ID, INLINE_CANDIDATE_FORMAT_ID, INLINE_TICKER_TREE_FORMAT_ID, INLINE_DERIVED_FORMAT_ID):
                     validate_reference_trees(payload.get('reference_trees'), candidate_census)
-                if payload.get('format') in (FORMAT_ID, INLINE_CANDIDATE_FORMAT_ID, INLINE_TICKER_TREE_FORMAT_ID):
+                if payload.get('format') in (FORMAT_ID, INLINE_IDENTITY_PROOF_FORMAT_ID, INLINE_CANDIDATE_FORMAT_ID, INLINE_TICKER_TREE_FORMAT_ID):
                     validate_derived_trees(payload.get('derived_trees'))
                 if payload.get('format') in (INLINE_DERIVED_FORMAT_ID, INLINE_REFERENCE_FORMAT_ID, INLINE_INDEX_TREE_FORMAT_ID, NO_TICKER_PROOF_FORMAT_ID, INLINE_INDEX_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID):
                     validate_group_references(payload)
@@ -217,14 +221,14 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                     validate_override_references(payload)
                 if payload.get('format') in (INLINE_TICKER_TREE_FORMAT_ID, INLINE_DERIVED_FORMAT_ID, INLINE_REFERENCE_FORMAT_ID, INLINE_INDEX_TREE_FORMAT_ID, NO_TICKER_PROOF_FORMAT_ID, INLINE_INDEX_FORMAT_ID):
                     validate_ticker_delta(payload.get('symbol_delta'))
-                if payload.get('format') in (FORMAT_ID, INLINE_CANDIDATE_FORMAT_ID):
+                if payload.get('format') in (FORMAT_ID, INLINE_IDENTITY_PROOF_FORMAT_ID, INLINE_CANDIDATE_FORMAT_ID):
                     from .ticker_delta_trees import validate_headers
                     validate_headers(payload.get('ticker_trees'))
                 if payload.get('format') in (INLINE_INDEX_TREE_FORMAT_ID, NO_TICKER_PROOF_FORMAT_ID):
                     validate_index_delta(payload.get('index_delta'), payload.get('candidates'))
-                if payload.get('format') in (FORMAT_ID, INLINE_CANDIDATE_FORMAT_ID, INLINE_TICKER_TREE_FORMAT_ID, INLINE_DERIVED_FORMAT_ID, INLINE_REFERENCE_FORMAT_ID):
+                if payload.get('format') in (FORMAT_ID, INLINE_IDENTITY_PROOF_FORMAT_ID, INLINE_CANDIDATE_FORMAT_ID, INLINE_TICKER_TREE_FORMAT_ID, INLINE_DERIVED_FORMAT_ID, INLINE_REFERENCE_FORMAT_ID):
                     validate_index_tree(payload.get('index_tree'), candidate_census)
-                if payload.get('format') in (FORMAT_ID, INLINE_CANDIDATE_FORMAT_ID, INLINE_TICKER_TREE_FORMAT_ID, INLINE_DERIVED_FORMAT_ID, INLINE_REFERENCE_FORMAT_ID, INLINE_INDEX_TREE_FORMAT_ID) and payload.get('ticker_proofs_binding') != proof_meta:
+                if payload.get('format') in (FORMAT_ID, INLINE_IDENTITY_PROOF_FORMAT_ID, INLINE_CANDIDATE_FORMAT_ID, INLINE_TICKER_TREE_FORMAT_ID, INLINE_DERIVED_FORMAT_ID, INLINE_REFERENCE_FORMAT_ID, INLINE_INDEX_TREE_FORMAT_ID) and payload.get('ticker_proofs_binding') != proof_meta:
                     raise RegistryError('ticker lookup proof binding mismatch')
             migrating = previous is not None and payload.get('format') == 'bounded-composite/1.0'
             migrate_blobs = previous is not None and payload.get('format') == LEGACY_FORMAT_ID
@@ -238,7 +242,8 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
             migrate_derived = previous is not None and payload.get('format') in (LEGACY_FORMAT_ID, INLINE_GROUP_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_INDEX_FORMAT_ID, NO_TICKER_PROOF_FORMAT_ID, INLINE_INDEX_TREE_FORMAT_ID, INLINE_REFERENCE_FORMAT_ID, INLINE_DERIVED_FORMAT_ID)
             migrate_ticker_trees = previous is not None and payload.get('format') in (LEGACY_FORMAT_ID, INLINE_GROUP_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_INDEX_FORMAT_ID, NO_TICKER_PROOF_FORMAT_ID, INLINE_INDEX_TREE_FORMAT_ID, INLINE_REFERENCE_FORMAT_ID, INLINE_DERIVED_FORMAT_ID, INLINE_TICKER_TREE_FORMAT_ID)
             migrate_candidates = previous is not None and payload.get('format') in (LEGACY_FORMAT_ID, INLINE_GROUP_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_INDEX_FORMAT_ID, NO_TICKER_PROOF_FORMAT_ID, INLINE_INDEX_TREE_FORMAT_ID, INLINE_REFERENCE_FORMAT_ID, INLINE_DERIVED_FORMAT_ID, INLINE_TICKER_TREE_FORMAT_ID, INLINE_CANDIDATE_FORMAT_ID)
-            if not staged and not migrating and not migrate_candidates:
+            migrate_identity_proofs = previous is not None and payload.get('format') in (LEGACY_FORMAT_ID, INLINE_GROUP_FORMAT_ID, INLINE_OVERRIDE_FORMAT_ID, INLINE_TICKER_FORMAT_ID, INLINE_INDEX_FORMAT_ID, NO_TICKER_PROOF_FORMAT_ID, INLINE_INDEX_TREE_FORMAT_ID, INLINE_REFERENCE_FORMAT_ID, INLINE_DERIVED_FORMAT_ID, INLINE_TICKER_TREE_FORMAT_ID, INLINE_CANDIDATE_FORMAT_ID, INLINE_IDENTITY_PROOF_FORMAT_ID)
+            if not staged and not migrating and not migrate_identity_proofs:
                 if previous is None:
                     raise RegistryError('no new records or prior generation')
                 db.commit()
@@ -389,6 +394,9 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                     seen.add(identity)
                 payload['candidate_tree'] = candidate_tree_from_list(db, candidates)
                 payload.pop('candidates')
+            if migrate_identity_proofs:
+                from .identity_proof_tree import build as build_identity_proof_tree
+                payload['identity_proof_tree'] = build_identity_proof_tree(db, cat, meta)
                 payload['format'] = FORMAT_ID
             bounded = payload if migrating else None
             if previous and not migrating:
@@ -404,7 +412,9 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                            'reference_trees': {name: {'root': None, 'count': 0} for name in ('delta', 'evidence')}, 'candidate_tree': {'root': None, 'count': 0}}
                 index_tree = {'root': None, 'file_count': 0, 'row_count': 0, 'flag_census': {}}
                 from .ticker_delta_trees import empty as empty_ticker_trees
+                from .identity_proof_tree import build as build_identity_proof_tree
                 ticker_trees = empty_ticker_trees()
+                payload['identity_proof_tree'] = build_identity_proof_tree(db, cat, meta)
             from .candidate_tree import CandidateTree, materialize as materialize_candidates
             payload['candidates'] = CandidateTree(db, payload['candidate_tree'])
             payload['delta'] = ReferenceTree(db, payload['reference_trees']['delta'])
@@ -523,7 +533,9 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                     groups[identity] = digest
                 return [(src, row) for src, row in rows]
 
-            pinned_identity_groups = _pin_identity_manifest(cat, meta) if affected_w2 or affected_b2 else None
+            from .identity_proof_tree import IdentityProofTree
+            identity_proofs = IdentityProofTree(payload['identity_proof_tree'], meta, db=db)
+            pinned_identity_groups = _pin_indexed_identity_manifest(cat, meta, identity_proofs) if affected_w2 or affected_b2 else None
             for identity in sorted(affected_w2):
                 baseline_rows = list(observations_for_identity(cat, identity, 'w2', pinned_groups=pinned_identity_groups))
                 delta_rows = affected_group('w2', identity, new_w2.get(identity, []))
@@ -560,7 +572,7 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
             seal_pending_queue(db)
             db.execute('INSERT INTO composite_active VALUES (1,?) ON CONFLICT(singleton) DO UPDATE SET generation=excluded.generation', (generation,))
             db.commit()
-            return {'status': 'PUBLISHED', 'generation': generation, 'new_inputs': len(new), 'migrated_bounded_generation': previous[0] if migrating else None, 'migrated_inline_generation': previous[0] if migrate_blobs else None, 'migrated_groups_generation': previous[0] if migrate_groups else None, 'migrated_overrides_generation': previous[0] if migrate_overrides else None, 'migrated_tickers_generation': previous[0] if migrate_tickers else None, 'migrated_index_generation': previous[0] if migrate_index else None, 'migrated_ticker_proofs_generation': previous[0] if migrate_proofs else None, 'migrated_index_tree_generation': previous[0] if migrate_tree else None, 'migrated_references_generation': previous[0] if migrate_references else None, 'migrated_derived_references_generation': previous[0] if migrate_derived else None, 'migrated_ticker_trees_generation': previous[0] if migrate_ticker_trees else None, 'migrated_candidates_generation': previous[0] if migrate_candidates else None, 'row_count': index['counts']['row_count'] + index_tree['row_count']}
+            return {'status': 'PUBLISHED', 'generation': generation, 'new_inputs': len(new), 'migrated_bounded_generation': previous[0] if migrating else None, 'migrated_inline_generation': previous[0] if migrate_blobs else None, 'migrated_groups_generation': previous[0] if migrate_groups else None, 'migrated_overrides_generation': previous[0] if migrate_overrides else None, 'migrated_tickers_generation': previous[0] if migrate_tickers else None, 'migrated_index_generation': previous[0] if migrate_index else None, 'migrated_ticker_proofs_generation': previous[0] if migrate_proofs else None, 'migrated_index_tree_generation': previous[0] if migrate_tree else None, 'migrated_references_generation': previous[0] if migrate_references else None, 'migrated_derived_references_generation': previous[0] if migrate_derived else None, 'migrated_ticker_trees_generation': previous[0] if migrate_ticker_trees else None, 'migrated_candidates_generation': previous[0] if migrate_candidates else None, 'migrated_identity_proofs_generation': previous[0] if migrate_identity_proofs else None, 'row_count': index['counts']['row_count'] + index_tree['row_count']}
         except (sqlite3.Error, ValueError, KeyError, TypeError, QueryError) as exc:
             if isinstance(exc, RegistryError):
                 raise

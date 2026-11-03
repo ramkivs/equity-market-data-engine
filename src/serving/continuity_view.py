@@ -13,7 +13,7 @@ _lock = Lock()
 
 def get_continuity(baseline, index):
     if hasattr(baseline, 'payload'):
-        if baseline.payload.get('format') in ('catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0'):
+        if baseline.payload.get('format') in ('catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0', 'catalog-composite/12.0', 'catalog-composite/13.0'):
             return {'format': FORMAT, 'baseline_manifest_sha256': baseline.original.manifest_digest,
                     'availability': 'available', 'reason': None}, _CatalogGroups(baseline)
         document = baseline.payload['b3']
@@ -61,7 +61,14 @@ class _CatalogGroups:
             db.execute('BEGIN')
             if meta != self.baseline.payload['catalog_binding'] or _metadata(db) != meta:
                 raise ValueError('continuity catalog changed since publication')
-            rows = list(observations_for_identity(db, identity, 'b2'))
+            if self.baseline.payload.get('format') == 'catalog-composite/13.0':
+                from .identity_proof_tree import IdentityProofTree
+                from .continuity_catalog import _pin_indexed_identity_manifest
+                proofs = IdentityProofTree(self.baseline.payload['identity_proof_tree'], meta, path=self.baseline.registry_path)
+                pinned = _pin_indexed_identity_manifest(db, meta, proofs)
+                rows = list(observations_for_identity(db, identity, 'b2', pinned_groups=pinned))
+            else:
+                rows = list(observations_for_identity(db, identity, 'b2'))
             rows.extend((source, row) for source, row in self.baseline.payload['b2_delta'].get(identity, []))
             document = build_continuity(rows, self.baseline.original.manifest_digest,
                                         catalog_override=self.baseline.payload['symbol_catalog'])

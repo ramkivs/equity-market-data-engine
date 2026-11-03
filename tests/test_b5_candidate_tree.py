@@ -47,7 +47,7 @@ class CandidateTreePublicationTests(unittest.TestCase):
     def to_v11(self):
         selected = active_snapshot(self.baseline, self.args[1], self.args[2])
         payload = dict(selected[0].payload)
-        for name in ('delta', 'evidence', 'w2_delta', 'b2_delta', 'w2_overrides', 'b3_overrides', 'candidate_tree', 'symbol_catalog', 'symbol_delta', 'index_delta', 'index'):
+        for name in ('delta', 'evidence', 'w2_delta', 'b2_delta', 'w2_overrides', 'b3_overrides', 'candidate_tree', 'identity_proof_tree', 'symbol_catalog', 'symbol_delta', 'index_delta', 'index'):
             payload.pop(name)
         payload['format'] = 'catalog-composite/11.0'
         text = _json(payload); digest = _sha(text)
