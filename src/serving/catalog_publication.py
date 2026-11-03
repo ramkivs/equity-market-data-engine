@@ -1,8 +1,8 @@
 """Catalog-backed atomic publication for the selected composite application.
 
-Only pending candidates and catalog observations for affected identities are
-parsed. Canonical delta rows and evidence are detached immutable blobs. Compact
-metadata, projections and derived state remain in the generation JSON.
+Only pending candidates, affected prior identity groups and catalog
+observations for affected identities are parsed during ordinary publication. Canonical delta rows, evidence and identity projection groups are detached
+immutable blobs. Compact metadata and derived state remain in generation JSON.
 """
 import copy
 import json
@@ -20,10 +20,12 @@ from .incremental_drafts import _validate
 from .index import load_index
 from .symbols import _identity, observed_trading_symbol
 from .w2_continuity import build_continuity
-from .composite_blobs import put as put_blob, schema as blob_schema, validate_references
+from .composite_blobs import (put as put_blob, schema as blob_schema, validate_references,
+                              validate_group_references, group_document, load_group_from_db, sha as blob_sha)
 
 LEGACY_FORMAT_ID = 'catalog-composite/1.0'
-FORMAT_ID = 'catalog-composite/2.0'
+INLINE_GROUP_FORMAT_ID = 'catalog-composite/2.0'
+FORMAT_ID = 'catalog-composite/3.0'
 MAX_PENDING_BYTES = 128 * 1024 * 1024
 MAX_PENDING_ROWS = 20000
 
@@ -108,17 +110,20 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                 if _sha(previous[1]) != previous[0]:
                     raise RegistryError('active composite digest mismatch')
                 payload = json.loads(previous[1])
-                if payload.get('format') not in (FORMAT_ID, LEGACY_FORMAT_ID, 'bounded-composite/1.0'):
+                if payload.get('format') not in (FORMAT_ID, INLINE_GROUP_FORMAT_ID, LEGACY_FORMAT_ID, 'bounded-composite/1.0'):
                     raise RegistryError('unknown active composite format')
                 if payload.get('baseline_manifest_sha256') != baseline.manifest_digest or payload.get('baseline_index_sha256') != index_hash:
                     raise RegistryError('active composite baseline/index mismatch')
-                if payload.get('format') in (FORMAT_ID, LEGACY_FORMAT_ID) and payload.get('catalog_binding') != meta:
+                if payload.get('format') in (FORMAT_ID, INLINE_GROUP_FORMAT_ID, LEGACY_FORMAT_ID) and payload.get('catalog_binding') != meta:
                     raise RegistryError('active composite catalog mismatch')
-                if payload.get('format') == FORMAT_ID:
+                if payload.get('format') in (FORMAT_ID, INLINE_GROUP_FORMAT_ID):
                     validate_references(payload)
+                if payload.get('format') == FORMAT_ID:
+                    validate_group_references(payload)
             migrating = previous is not None and payload.get('format') == 'bounded-composite/1.0'
             migrate_blobs = previous is not None and payload.get('format') == LEGACY_FORMAT_ID
-            if not staged and not migrating and not migrate_blobs:
+            migrate_groups = previous is not None and payload.get('format') in (LEGACY_FORMAT_ID, INLINE_GROUP_FORMAT_ID)
+            if not staged and not migrating and not migrate_groups:
                 if previous is None:
                     raise RegistryError('no new records or prior generation')
                 db.commit()
@@ -136,6 +141,17 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                     put_blob(db, ev, candidate['evidence_sha256'])
                     payload['delta'][source] = candidate['rows_sha256']
                     payload['evidence'][candidate['digest']] = candidate['evidence_sha256']
+            if migrate_groups:
+                for kind in ('w2', 'b2'):
+                    groups = payload.get(kind + '_delta')
+                    if not isinstance(groups, dict):
+                        raise RegistryError('invalid inline identity groups')
+                    for identity, rows in list(groups.items()):
+                        document = group_document(kind, identity, rows, payload['delta'])
+                        text = _json(document)
+                        digest = blob_sha(text)
+                        put_blob(db, text, digest)
+                        groups[identity] = digest
                 payload['format'] = FORMAT_ID
             if previous and payload.get('format') == FORMAT_ID:
                 validate_references(payload)
@@ -203,6 +219,7 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                 new.append((rec, rows_text, evidence, rows))
             all_new = []
             affected_w2, affected_b2, added_tickers = set(), set(), set()
+            new_w2, new_b2 = {}, {}
             def verify_carried_index():
                 composite_index['counts']['row_files'] = len(composite_index['files'])
                 composite_index['counts']['row_count'] = sum(f['row_count'] for f in composite_index['files'].values())
@@ -227,9 +244,9 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                     w2 = normalize_upper_trim(values.get('security_isin') or '')
                     b2 = _identity(row)
                     if w2:
-                        payload['w2_delta'].setdefault(w2, []).append([source, projected]); affected_w2.add(w2)
+                        new_w2.setdefault(w2, []).append([source, projected]); affected_w2.add(w2)
                     if b2:
-                        payload['b2_delta'].setdefault(b2, []).append([source, projected]); affected_b2.add(b2)
+                        new_b2.setdefault(b2, []).append([source, projected]); affected_b2.add(b2)
                     ticker = observed_trading_symbol(row)['observed_symbol']
                     if ticker and isinstance(values.get('series'), str):
                         added_tickers.add((ticker, values['series']))
@@ -250,14 +267,26 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
             # Reuse of a newly observed ticker affects existing valid identities,
             # even when those identities have no rows in this delta.
             affected_b2.update(o[2] for o in catalog['observations'] if (o[0], o[1]) in added_tickers and o[2])
+            def affected_group(kind, identity, additions):
+                groups = payload[kind + '_delta']
+                previous_hash = groups.get(identity)
+                rows = load_group_from_db(db, kind, identity, previous_hash, payload['delta']) if previous_hash else []
+                if additions:
+                    rows += additions
+                    text = _json(group_document(kind, identity, rows, payload['delta']))
+                    digest = blob_sha(text)
+                    put_blob(db, text, digest)
+                    groups[identity] = digest
+                return [(src, row) for src, row in rows]
+
             for identity in sorted(affected_w2):
                 baseline_rows = list(observations_for_identity(cat, identity, 'w2'))
-                delta_rows = [(src, row) for src, row in payload['w2_delta'].get(identity, [])]
+                delta_rows = affected_group('w2', identity, new_w2.get(identity, []))
                 docs = _w2([('affected', [row for _, row in baseline_rows + delta_rows])])
                 payload['w2_overrides'][identity] = docs[0] if docs else None
             for identity in sorted(affected_b2):
                 base_rows = list(observations_for_identity(cat, identity, 'b2'))
-                delta_rows = [(src, row) for src, row in payload['b2_delta'].get(identity, [])]
+                delta_rows = affected_group('b2', identity, new_b2.get(identity, []))
                 doc = build_continuity(base_rows + delta_rows, baseline.manifest_digest, catalog_override=catalog)
                 payload['b3_overrides'][identity] = doc['identities']
             composite_index['counts']['row_files'] = len(composite_index['files'])
@@ -277,7 +306,7 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                 db.execute('INSERT INTO accepted VALUES (?,?,?,?)', (rec['file_name'], rec['date'], rec['digest'], _json(entry)))
             db.execute('INSERT INTO composite_active VALUES (1,?) ON CONFLICT(singleton) DO UPDATE SET generation=excluded.generation', (generation,))
             db.commit()
-            return {'status': 'PUBLISHED', 'generation': generation, 'new_inputs': len(new), 'migrated_bounded_generation': previous[0] if migrating else None, 'migrated_inline_generation': previous[0] if migrate_blobs else None, 'row_count': composite_index['counts']['row_count']}
+            return {'status': 'PUBLISHED', 'generation': generation, 'new_inputs': len(new), 'migrated_bounded_generation': previous[0] if migrating else None, 'migrated_inline_generation': previous[0] if migrate_blobs else None, 'migrated_groups_generation': previous[0] if migrate_groups else None, 'row_count': composite_index['counts']['row_count']}
         except (sqlite3.Error, ValueError, KeyError, TypeError) as exc:
             if isinstance(exc, RegistryError):
                 raise

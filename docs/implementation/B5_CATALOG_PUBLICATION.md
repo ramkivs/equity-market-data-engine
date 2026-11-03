@@ -54,17 +54,24 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
 
 ## Scope limits — no B5 completion claim
 
-* Catalog-backed generation format 2 stores incremental canonical rows and
+* Catalog-backed generation format 3 stores incremental canonical rows and
   evidence once as content-addressed SQLite blobs. Later publications refer to
   existing blobs without reading or copying their contents. Readers verify each
   accessed blob against its generation-pinned digest; old blobs remain available
   to in-flight readers. The active pointer, new blobs, new accepted records and
   generation commit in the same transaction. Existing format-1 catalog composites
   migrate once from their retained inline deltas, with digest/accepted checks and
-  no historical canonical or accepted source archive reads.
+  no historical canonical or accepted source archive reads. Format-2 generations
+  migrate their inline identity projections to format 3 transactionally.
+* W2 and B2 incremental projections are stored as content-addressed per-identity
+  groups. Later publication reads and rewrites only groups affected by the new
+  rows or ticker ambiguity; unaffected group contents are not copied or read.
+  Group hashes and identity/source checks are verified when accessed, and prior
+  versions remain available to pinned readers. A single heavily updated identity
+  can still grow without bound within its individual group blob.
 * This is **not yet fully delta-only**: the baseline serving index, compact
-  ticker census, candidate references, accumulated delta identity projections,
-  and W2/B3 overrides remain together in each generation JSON. Publication
+  ticker census, candidate and identity-group references, and W2/B3 overrides
+  remain together in each generation JSON. Publication
   still copies and serializes these accumulated structures, and recomputes
   index summary counts. Very large or numerous deltas can still hit memory or
   SQLite single-value limits. No scalable long-running lifecycle is established.
@@ -124,7 +131,7 @@ This exceeds the former total 20,000-row guard, but is **not** an M2-scale test
 or a resource claim for approximately 5.7 million rows. No qualified M2 data was
 accessed or modified, and no historical archive was ingested.
 
-Linux disposable-fixture suite: **1034 tests run, 14 skipped**; existing
+Linux disposable-fixture suite: **1040 tests run, 14 skipped**; existing
 unrelated ResourceWarnings remain. Windows validation remains pending.
 
 The scoped-reader tests exercise calendar gap/holiday preservation, UDiFF date
@@ -153,4 +160,10 @@ user registry is located.
 on-access row/evidence corruption, reference mismatch, inline-generation
 migration with and without pending inputs, rollback/retry, missing old source
 archives, and blocking historical canonical reads during migration. It does not
-prove the remaining accumulated projection/index structures scale to M2.
+prove the remaining accumulated reference/derived/index structures scale to M2.
+
+`tests/test_b5_detached_identity_groups.py` tests affected-only group access,
+pinned unaffected groups, on-access corruption, format-2 migration with and
+without pending deltas, rollback/retry, corrupt group identities and reference
+validation. The identity groups and derived overrides are not yet sharded within
+a single heavily updated identity.
