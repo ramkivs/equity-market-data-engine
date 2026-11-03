@@ -73,6 +73,8 @@ def publish(baseline, registry_root, state, saved, history, source_roots):
                           rec['root'], rec['relative_path'], rec['date'], 'publication-check-' + rec['run_id'], rec['bindings'])
         if finding['sha256'] != rec['digest']:
             raise RegistryError('source content changed after staging; held or requires revalidation')
+    from .composite_binding import ensure_binding
+    ensure_binding(baseline, state, registry_root)
     db, _ = _open(baseline, path)
     try:
         db.execute('PRAGMA synchronous=FULL')

@@ -147,6 +147,9 @@ class UiApi:
         # serialize store mutations (saved/history) across handler threads
         self._lock = threading.Lock()
         self._validate_layout()
+        if self._registry_root is not None:
+            from serving.composite_binding import ensure_registry_binding
+            ensure_registry_binding(self._baseline, self._state_root, self._registry_root)
 
     def _validate_layout(self):
         self._root_config.validate()
@@ -157,6 +160,14 @@ class UiApi:
                            history=self._history_root, registry=self._registry_root)
 
     def _composite(self):
+        from serving.composite_binding import read_binding, selected_snapshot
+        configured = read_binding(self._baseline, self._state_root)
+        if configured is not None:
+            if self._registry_root is not None and configured != self._registry_root:
+                raise QueryError('composite-unavailable', 'registry argument disagrees with durable binding')
+            validate_roots(package=self._baseline.root, state=self._state_root, saved=self._saved_root,
+                           history=self._history_root, registry=configured)
+            return selected_snapshot(self._baseline, self._state_root)
         if self._registry_root is None:
             return None
         from serving.incremental_publication import active_snapshot
@@ -178,10 +189,11 @@ class UiApi:
             "repo_root": self._repo_root,
             "query_modes": list(QUERY_MODES),
         }
-        if self._registry_root is not None:
+        from serving.composite_binding import has_binding
+        if self._registry_root is not None or has_binding(self._state_root):
             selected = self._composite()
             document['composite'] = {'generation': selected[0].manifest_digest if selected else None,
-                                     'supported_query_modes': ['Q1-dataset', 'Q2-date-range', 'Q3-instrument', 'Q4-filter', 'Q5-association'] if selected else list(QUERY_MODES)}
+                                     'supported_query_modes': ['Q1-dataset', 'Q2-date-range', 'Q3-instrument', 'Q4-filter', 'Q5-association', 'Q7-record-detail', 'Q10-qualification'] if selected else list(QUERY_MODES)}
         return document
 
     # ------------------------------------------------------------------ query
@@ -312,8 +324,6 @@ class UiApi:
             raise HistoryError("history-invalid", "params must be a JSON object (the mode's exact parameter contract)")
         with self._lock:
             self._validate_layout()
-            if self._composite() is not None:
-                raise QueryError('composite-unavailable', 'history recording is unavailable for bounded composite generations')
             entry, output, detail, digest = record_execution(
                 self._history_root, mode, params, self._baseline, self._state_root, m2=self._m2, repo_root=self._repo_root
             )

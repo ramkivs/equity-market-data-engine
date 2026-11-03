@@ -1156,6 +1156,9 @@ function renderInspector() {
   } else if (insp.related && insp.related.record_count === 0) {
     html += "<div class=\"insp-group\"><div class=\"insp-group-title\">Related Records (Q5)</div><div class=\"state-empty\">No dated-association intervals served for this instrument" + (insp.related.associations_present === false ? " (the package carries no associations file — legitimate state)" : "") + ".</div></div>";
   }
+  if (d.reconciliation_availability) {
+    html += "<div class=\"insp-group\"><div class=\"insp-group-title\">Reconciliation</div><div class=\"state-unavailable\">" + esc(d.reconciliation_availability) + "</div></div>";
+  }
   if (d.reconciliation && d.reconciliation.length) {
     html += "<div class=\"insp-group\"><div class=\"insp-group-title\">Reconciliation (served records for this archive)</div><div class=\"recon-list\">";
     for (const r of d.reconciliation.slice(0, 6)) {

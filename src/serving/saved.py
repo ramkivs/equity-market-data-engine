@@ -493,10 +493,13 @@ def execute_query_definition(
     inventory for the Q9 view exactly as the CLI does.
     """
     if composite is None:
+        from .composite_binding import selected_snapshot
+        composite = selected_snapshot(baseline, state_root)
+    if composite is None:
         index_document, _digest = load_index(state_root, baseline)
     else:
         baseline, index_document = composite
-        if mode not in (DATASET_MODE, DATE_RANGE_MODE, INSTRUMENT_MODE, FILTER_MODE, ASSOCIATIONS_MODE):
+        if mode not in (DATASET_MODE, DATE_RANGE_MODE, INSTRUMENT_MODE, FILTER_MODE, ASSOCIATIONS_MODE, RECORD_DETAIL_MODE, QUALIFICATION_MODE):
             raise QueryError("composite-unavailable", "this query is unavailable for the bounded composite generation")
     if mode == DATASET_MODE:
         return query_dataset_summary(index_document, family=params.get("family"), year=params.get("year"))
@@ -561,6 +564,11 @@ def execute_query_definition(
     if mode == ARCHIVE_MODE:
         return query_archive_inventory(baseline, d01=(load_d01_inventory(repo_root=repo_root) if m2 else None))
     if mode == QUALIFICATION_MODE:
+        if composite is not None:
+            output = query_qualification(baseline.original, repo_root=params.get("repo", repo_root))
+            output['subject_scope'] = 'qualified-baseline-only; incremental generation is not independently qualified'
+            output['composite_generation'] = baseline.manifest_digest
+            return output
         return query_qualification(baseline, repo_root=params.get("repo", repo_root))
     raise SavedQueryError(
         "saved-query-invalid",
@@ -577,7 +585,9 @@ def execute_saved(root: str, query_id: str, baseline: Baseline, state_root: str,
     (C2(a)), and a query failure never affects it or the baseline (D16-09).
     """
     assert_separate_roots(root, state_root)
-    validate_roots(package=baseline.root, saved=root, state=state_root)
+    from .composite_binding import read_binding
+    registry = read_binding(baseline, state_root)
+    validate_roots(package=baseline.root, saved=root, state=state_root, registry=registry)
     document = load_saved(root)
     record = document["queries"].get(query_id)
     if record is None:

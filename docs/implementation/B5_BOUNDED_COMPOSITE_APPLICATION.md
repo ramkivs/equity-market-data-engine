@@ -1,8 +1,10 @@
 # B5 bounded composite publication and application integration
 
 Continues from `9c6990c` under the owner's recorded authorization. **B5 remains
-open.** This is an actual, opt-in application integration for bounded
-synthetic-sized datasets, not completion of the qualified M2 workflow.
+open.** This is an actual application integration for bounded synthetic-sized
+datasets, not completion of the qualified M2 workflow. The continuation after
+`84e2b4c` adds normal-startup binding and several reader paths, but does not
+satisfy the requested 5.7-million-row or all-reader acceptance criteria.
 
 ## Publication and reader switch
 
@@ -27,24 +29,39 @@ older generations and staged data are retained. Prior conflict provenance now
 correctly references the incremental generation/run rather than attributing a
 published delta to the baseline run.
 
-Start the actual application with its normal roots **and** `--registry <root>`
-to opt in to the active composite. Each request reads the active pointer and
-one complete generation payload together, verifies its digest and baseline
-manifest/index binding, then pins that payload for the entire request. A
-publication concurrent with a request cannot switch that request midway. A
-server restart selects the durable pointer again without reading or reprocessing
-source archives. With no selected generation the configured app uses the
-baseline; a corrupt or inconsistent selected generation fails closed. Symbol
-catalog caching is serialized and keyed by generation to avoid cross-generation
-reader races.
+Before committing a new active generation, publication creates a durable,
+content-checksummed state-to-registry binding in the serving state directory.
+Normal UI startup with the ordinary package/state/saved/history roots then
+selects the active generation without `--registry`. The shared saved-query
+executor, history recorder, direct serving `query` and `dataset` CLI also select
+that generation. A request takes one verified generation snapshot; a concurrent
+publication cannot switch it midway. The UI status response identifies the
+selected generation. A malformed, mismatched, incomplete or corrupt binding or
+generation fails closed. An explicit `--registry` must agree with an existing
+binding. The binding is created before the pointer transaction; a crash during
+its creation can leave an incomplete binding, which requires diagnosis and is
+not automatically deleted. Its digest catches accidental corruption, not an
+adversary able to recompute it.
 
-In the selected composite, normal and saved-query UI requests for Q1–Q5 use
-the selected index and canonical rows. Q3/Q4's B2 resolution scans the whole
-selected baseline-plus-delta corpus; Q5 uses the recomputed W2 identities plus
-the baseline-plus-delta B3 derivation. Q5 serving annotations identify the
-composite W2 source rather than pretending it is the original qualified W2
-file. The UI status response reports the selected generation and supported
-modes. Existing server behavior without `--registry` is unchanged.
+Q1–Q5 continue to use the recomputed index, rows, W2 and B3. Q7 now reads the
+selected generation: qualified baseline rows use the original manifest and
+reconciliation; incremental rows carry the committed candidate digest and
+published generation, and explicitly say reconciliation was not published for
+that input. The UI inspector displays this availability rather than implying an
+empty reconciliation result. Q10 intentionally evaluates the original baseline
+qualification and labels it baseline-only; it does not assert the composite is
+qualified. History records execute via the shared selected-generation executor.
+However, history's existing entry schema does not record the generation ID, so
+history alone is not a complete generation provenance record.
+
+Compatibility migration: an existing registry published by `84e2b4c` has no
+binding. Starting once with its prior explicit `--registry` validates and binds
+it; subsequent normal startup works without the option. There is no safe
+registry discovery from package/state alone for an unbound old installation.
+Similarly, a binding file that is completely removed is indistinguishable from
+an installation never bound, so ordinary readers can revert to the baseline;
+this remaining failure mode prevents an application-wide guarantee. Do not
+manually remove it as a recovery mechanism.
 
 ## Scope limits — B5 is not complete
 
@@ -54,15 +71,17 @@ modes. Existing server behavior without `--registry` is unchanged.
   approximately 5.7-million-row qualified M2 baseline. B3 materializes row
   evidence and the current implementation reads and re-derives all canonical
   rows for each changed generation. No real-M2 resource claim is made.
-* Only Q1–Q5 are implemented for a selected composite. Q6–Q10 and history
-  recording explicitly fail closed, rather than mixing qualified-baseline
-  calendar, detail, quality, inventory or qualification data with the new
-  generation. In particular, the Inspector's Q7 detail is unavailable.
-  Conflict findings remain visible through the registry CLI, not Q8/Q9/Q10/UI.
-* The serving CLI's existing Q3/Q4/Q5 commands still address the baseline;
-  composite selection currently exists only in the opt-in local UI adapter.
-  Servers launched without `--registry` continue to show the baseline, so
-  selection is not yet a globally authoritative application-wide switch.
+* Q6 calendar, Q8 quality and Q9 inventory still fail closed in selected
+  UI/saved/history execution. In particular, selected-generation reconciliation,
+  unresolved state, conflict findings and archive inventory are not exposed as
+  complete UI views. Registry CLI still reports D21 conflicts. Direct CLI
+  `quality` and `query --calendar` fail closed with an active composite.
+* CLI `inventory` and `qualification` take no serving-state argument and remain
+  explicitly labelled original-baseline-only, not selected-generation views.
+  `info` labels its index metadata baseline-only when a binding exists. These
+  distinct commands and pre-binding installations mean the application-wide
+  selection requirement is not fully met. A normal state rebuild currently
+  refuses the additional binding file rather than deleting it.
 * Normal discovery is still manual and dates are supplied as governed input;
   this is not an automated corpus watcher. Publication rechecks retained
   staged source files, including already published deltas, so missing sources
@@ -91,9 +110,22 @@ corrupt payloads, retain D21 conflicts, and compare original synthetic package
 bytes. After publication the server restart test removes source fixture files
 and still serves the committed rows.
 
-* Focused suite: **248 passed**.
-* Full suite: **977 passed, 14 skipped**; pre-existing unrelated
-  ResourceWarnings remain.
+* Earlier `84e2b4c` evidence: focused suite 248 passed; full suite reported
+  977 tests and 14 skips.
+* Continuation synthetic tests cover ordinary startup without `--registry`,
+  restart without source archives, Q7 baseline/delta provenance, scoped Q10,
+  saved queries, history, direct CLI selection, corrupt/mismatched bindings and
+  one-time legacy binding. Existing publication tests cover in-flight pinning,
+  rollback/retry, crash and D21. See `tests/test_b5_application_readers.py`.
+* The continuation suite ran **983 tests, 14 skipped**; pre-existing unrelated
+  ResourceWarnings remain. Windows-specific validation remains pending.
+* A 5,700,000-row **count sentinel** in a tiny synthetic index is rejected by
+  the existing 20,000-row guard before row processing. It is not a 5.7-million-
+  row fixture, a scale test, or evidence of M2-scale compatibility. No full-size
+  synthetic lifecycle was performed. Removing the guard alone would still leave
+  baseline rows, W2/B3 evidence and the single SQLite JSON generation payload
+  materialized in memory; a scalable representation/reader path remains to be
+  implemented and validated.
 * Synthetic fixture runner identity is patched for publication tests, because
   it is not an I4 runner package. Actual current engine/runner fingerprints were
   compared to the recorded M2 pins in the prior staging work. Qualified M2 was

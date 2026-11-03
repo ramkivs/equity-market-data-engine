@@ -119,7 +119,7 @@ def _load_row(baseline: Baseline, index: dict, source_file: str, source_line_num
     meta = index.get("files", {}).get(source_file)
     if not isinstance(meta, dict):
         raise QueryError("record-detail", "unknown row file %r (not a class-(1) row file of the verified baseline)" % source_file)
-    with open(baseline.path(source_file), "r", encoding="utf-8") as handle:
+    with (baseline.open_text(source_file) if hasattr(baseline, 'open_text') else open(baseline.path(source_file), "r", encoding="utf-8")) as handle:
         for line in handle:
             if not line.strip():
                 continue
@@ -208,8 +208,19 @@ def query_record_detail(
         raise QueryError("record-input", "source_line_number must be a positive integer (the row's canonical source_line_number)")
 
     row = _load_row(baseline, index, source_file, source_line_number)
-    archive = _archive_for_row(row, parse_input_manifest(baseline))
-    reconciliation = _reconciliation_for_archive(parse_reconciliation(baseline), archive)
+    delta = hasattr(baseline, 'payload') and source_file in baseline.payload['delta']
+    if delta:
+        digest = row.get('provenance', {}).get('archive_sha256')
+        matches = [item for item in baseline.payload['candidates'] if item.get('digest') == digest]
+        if len(matches) != 1 or source_file != 'incremental/' + str(digest) + '.rows.jsonl':
+            raise QueryError('record-detail', 'incremental archive provenance mismatch')
+        archive = dict(matches[0])
+        archive['state'] = 'PUBLISHED'
+        archive['generation'] = baseline.manifest_digest
+        reconciliation = []  # no runner reconciliation records were published for this delta
+    else:
+        archive = _archive_for_row(row, parse_input_manifest(baseline))
+        reconciliation = _reconciliation_for_archive(parse_reconciliation(baseline), archive)
 
     meta = index["files"][source_file]
     served = {key: value for key, value in row.items() if key != "raw_line"}
@@ -221,9 +232,12 @@ def query_record_detail(
         "source_file_year": meta.get("year"),
         "source_line_number": source_line_number,
     }
-    return {
+    result = {
         "query": RECORD_DETAIL_QUERY_ID,
         "row": served,
         "archive": archive,
         "reconciliation": reconciliation,
     }
+    if delta:
+        result['reconciliation_availability'] = 'not-published-for-incremental-input'
+    return result

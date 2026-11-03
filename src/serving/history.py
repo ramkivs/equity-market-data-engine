@@ -279,7 +279,9 @@ def record_execution(
     * This operation is the ONLY path that writes the history store (C2(a)).
     """
     assert_separate_from_state(root, state_root)
-    validate_roots(package=baseline.root, history=root, state=state_root)
+    from .composite_binding import read_binding
+    registry = read_binding(baseline, state_root)
+    validate_roots(package=baseline.root, history=root, state=state_root, registry=registry)
     params = validate_saved_definition(mode, params, "history execution description")
     document = _load_or_empty(root)
     entries: List[dict] = document["entries"]

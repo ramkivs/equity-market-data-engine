@@ -177,6 +177,7 @@ def conflicts(baseline, registry_root, state, saved, history, source_roots):
 def main(argv=None):
     from .baseline import BaselineError, DEFAULT_M2_SPEC, open_baseline
     from .index import ServingIndexError
+    from .query import QueryError
     parser = argparse.ArgumentParser(description='Explicit source registry inspection; does not ingest or publish.')
     for name in ('package', 'registry', 'state', 'saved-state', 'history-state', 'legacy-root', 'udiff-root'):
         parser.add_argument('--' + name, required=True)
@@ -222,7 +223,7 @@ def main(argv=None):
             result = inspect(*common, args.root, args.relative_path, args.date, args.scan_id, json.loads(args.current_bindings))
         print(_json({'result': 'pass', 'data': result}))
         return 0
-    except (ValueError, OSError, sqlite3.Error, BaselineError, ServingIndexError) as exc:
+    except (ValueError, OSError, sqlite3.Error, BaselineError, ServingIndexError, QueryError) as exc:
         print(_json({'result': 'fail', 'detail': str(exc)}))
         return 2
 

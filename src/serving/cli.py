@@ -206,7 +206,14 @@ def cmd_query(args) -> int:
         return 2
     try:
         handle = _open(args)
-        document, _digest = load_index(args.state, handle)
+        from .composite_binding import selected_snapshot
+        composite = selected_snapshot(handle, args.state)
+        if composite is None:
+            document, _digest = load_index(args.state, handle)
+        else:
+            handle, document = composite
+            if q6:
+                raise QueryError('composite-unavailable', 'calendar unavailable for selected composite generation')
         if q2:
             rows = query_date_range(handle, document, args.date_from, args.date_to)
             output = {
@@ -499,7 +506,12 @@ def cmd_history_delete(args) -> int:
 def cmd_dataset(args) -> int:
     try:
         handle = _open(args)
-        document, _digest = load_index(args.state, handle)
+        from .composite_binding import selected_snapshot
+        selected = selected_snapshot(handle, args.state)
+        if selected is None:
+            document, _digest = load_index(args.state, handle)
+        else:
+            _, document = selected
         output = query_dataset_summary(document, family=args.family, year=args.year)
     except (baseline_mod.BaselineError, ServingIndexError, QueryError) as exc:
         _print_json({"result": "fail", "detail": str(exc)})
@@ -513,6 +525,7 @@ def cmd_inventory(args) -> int:
         handle = _open(args)
         d01 = load_d01_inventory(repo_root=args.repo) if args.m2 else None
         output = query_archive_inventory(handle, d01=d01)
+        output['subject_scope'] = 'original-baseline-only; does not include incremental registry or generation'
     except (baseline_mod.BaselineError, D01InventoryError, QueryError) as exc:
         _print_json({"result": "fail", "detail": str(exc)})
         return 2
@@ -524,6 +537,7 @@ def cmd_qualification(args) -> int:
     try:
         handle = _open(args)
         output = query_qualification(handle, repo_root=args.repo)
+        output['subject_scope'] = 'qualified-baseline-only; incremental generation is not independently qualified'
     except (baseline_mod.BaselineError, QueryError) as exc:
         _print_json({"result": "fail", "detail": str(exc)})
         return 3
@@ -534,6 +548,9 @@ def cmd_qualification(args) -> int:
 def cmd_quality(args) -> int:
     try:
         handle = _open(args)
+        from .composite_binding import selected_snapshot
+        if selected_snapshot(handle, args.state) is not None:
+            raise QueryError('composite-unavailable', 'quality unavailable for selected composite generation')
         document, _digest = load_index(args.state, handle)
         output = query_data_quality(handle, document)
     except (baseline_mod.BaselineError, ServingIndexError, QueryError) as exc:
@@ -559,7 +576,10 @@ def cmd_info(args) -> int:
     if state is None:
         _print_json({"result": "fail", "detail": "no serving state at %s" % args.state})
         return 3
-    _print_json({"result": "pass", **state})
+    output = {"result": "pass", **state}
+    if os.path.lexists(os.path.join(args.state, 'composite_registry.json')):
+        output['scope'] = 'baseline index metadata only; a composite generation may be selected'
+    _print_json(output)
     return 0
 
 
