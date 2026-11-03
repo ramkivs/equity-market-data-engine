@@ -52,6 +52,7 @@ import sys
 
 from . import baseline as baseline_mod
 from .paths import validate_roots, RootLayoutError, RootConfiguration, resolved
+from .continuity_view import get_continuity
 from .archive import D01InventoryError, load_d01_inventory, query_archive_inventory
 from .detail import query_record_detail
 from .index import index_state, load_index, write_index, build_index, ServingIndexError
@@ -259,6 +260,7 @@ def cmd_query(args) -> int:
                 "series": args.instrument_series,
                 "symbol": args.instrument_symbol,
                 "associations_present": documents is not None,
+                "continuity": get_continuity(handle, document)[0],
                 "record_count": len(rows),
                 "records": list(rows),
             }

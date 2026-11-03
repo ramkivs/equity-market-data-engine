@@ -17,6 +17,7 @@ from typing import Optional, Tuple
 from .baseline import Baseline, BaselineError
 from .index import ServingIndexError
 from .symbols import observed_trading_symbol, build_symbol_catalog, resolve_symbol, row_matches, resolution_metadata
+from .continuity_view import get_continuity, group_summary
 
 QUERY_ID = "Q3-instrument"
 DATASET_QUERY_ID = "Q1-dataset"
@@ -620,6 +621,7 @@ def query_associations(
     if documents is None:
         return ()
 
+    _, continuity_doc = get_continuity(baseline, index)
     catalog = _symbol_catalog(baseline, index) if symbol is not None else None
     selection = _resolve(catalog, symbol, series) if catalog is not None else None
     results = []
@@ -653,6 +655,7 @@ def query_associations(
                     "source_line_number": line_number,
                     "symbol": symbol,
                 }
+                served["serving"]["continuity"] = group_summary(continuity_doc, doc["security_id"], series)
                 results.append(served)
         else:
             served = dict(doc)
@@ -662,6 +665,7 @@ def query_associations(
                 "source_file": ASSOCIATIONS_FILE,
                 "source_line_number": line_number,
             }
+            served["serving"]["continuity"] = group_summary(continuity_doc, doc["security_id"])
             results.append(served)
     return tuple(results)
 

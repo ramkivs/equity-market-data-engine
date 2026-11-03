@@ -83,6 +83,7 @@ import os
 import re
 from typing import Dict, List, Optional, Tuple
 
+from .continuity_view import get_continuity
 from .archive import ARCHIVE_QUERY_ID, load_d01_inventory, query_archive_inventory
 from .paths import validate_roots, overlaps, validate_store_root
 from .atomic import atomic_write_text
@@ -527,6 +528,7 @@ def execute_query_definition(
             "series": params.get("series"),
             "symbol": params.get("symbol"),
             "associations_present": documents is not None,
+            "continuity": get_continuity(baseline, index_document)[0],
             "record_count": len(rows),
             "records": list(rows),
         }

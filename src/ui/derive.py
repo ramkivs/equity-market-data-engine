@@ -291,18 +291,19 @@ def latest_years_params(max_year: Optional[int], n: int) -> Optional[dict]:
 #: The deterministic quick-filter preset table. Each preset maps to an
 #: exact (mode, params) pair over the authorized query surface — or None
 #: (unavailable) when the governing contract defines no such query.
-#: * "EQ (CM)" / "EQ (FO)" — Q4 exact-value filters on the as-published
-#:   ``series`` and ``segment`` values.
-#: * "Debt" / "Currency" — Q4 exact-value filter on the as-published
-#:   ``instrument_type`` value.
+#: * "EQ (all)" — Q4 series EQ, including legacy rows without a segment.
+#: * "CM segment" — exact UDiFF segment value, not a series code.
+#: * "FO segment" — unavailable: no verified published value in this corpus.
+#: * "Debt" / "Currency" — unavailable: no verified mapping.
 #: * "Latest 1Y/3Y/5Y/10Y" — Q2 date range per :func:`latest_years_params`
 #:   (data-relative; requires the served partition years at call time).
 #: * "Reliable Only" — None: no reliability classification exists in the
 #:   first-release serving contract; the preset is unavailable, never
 #:   approximated.
 QUICK_FILTERS = (
-    "EQ (CM)",
-    "EQ (FO)",
+    "EQ (all)",
+    "CM segment",
+    "FO segment",
     "Debt",
     "Currency",
     "Latest 1Y",
@@ -320,14 +321,10 @@ def quick_filter_params(name: str, max_year: Optional[int] = None) -> Optional[d
     UI renders it as an explicit unavailable state — it is never silently
     approximated or invented).
     """
-    if name == "EQ (CM)":
-        return {"mode": "Q4-filter", "params": {"filters": {"series": "EQ", "segment": "CM"}}}
-    if name == "EQ (FO)":
-        return {"mode": "Q4-filter", "params": {"filters": {"series": "EQ", "segment": "FO"}}}
-    if name == "Debt":
-        return {"mode": "Q4-filter", "params": {"filters": {"instrument_type": "DEP"}}}
-    if name == "Currency":
-        return {"mode": "Q4-filter", "params": {"filters": {"instrument_type": "CCY"}}}
+    if name == "EQ (all)":
+        return {"mode": "Q4-filter", "params": {"filters": {"series": "EQ"}}}
+    if name == "CM segment":
+        return {"mode": "Q4-filter", "params": {"filters": {"segment": "CM"}}}
     if name in ("Latest 1Y", "Latest 3Y", "Latest 5Y", "Latest 10Y"):
         n = int(name[len("Latest "):-1])
         params = latest_years_params(max_year, n)

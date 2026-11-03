@@ -202,10 +202,11 @@ class LatestYearsTests(unittest.TestCase):
 
 class QuickFilterTests(unittest.TestCase):
     def test_q4_presets(self):
-        self.assertEqual(derive.quick_filter_params("EQ (CM)"), {"mode": "Q4-filter", "params": {"filters": {"series": "EQ", "segment": "CM"}}})
-        self.assertEqual(derive.quick_filter_params("EQ (FO)"), {"mode": "Q4-filter", "params": {"filters": {"series": "EQ", "segment": "FO"}}})
-        self.assertEqual(derive.quick_filter_params("Debt"), {"mode": "Q4-filter", "params": {"filters": {"instrument_type": "DEP"}}})
-        self.assertEqual(derive.quick_filter_params("Currency"), {"mode": "Q4-filter", "params": {"filters": {"instrument_type": "CCY"}}})
+        self.assertEqual(derive.quick_filter_params("EQ (all)"), {"mode": "Q4-filter", "params": {"filters": {"series": "EQ"}}})
+        self.assertEqual(derive.quick_filter_params("CM segment"), {"mode": "Q4-filter", "params": {"filters": {"segment": "CM"}}})
+        self.assertIsNone(derive.quick_filter_params("FO segment"))
+        self.assertIsNone(derive.quick_filter_params("Debt"))
+        self.assertIsNone(derive.quick_filter_params("Currency"))
 
     def test_latest_presets(self):
         self.assertEqual(derive.quick_filter_params("Latest 10Y", 2026), {"mode": "Q2-date-range", "params": {"date_from": "2017-01-01", "date_to": "2026-12-31"}})

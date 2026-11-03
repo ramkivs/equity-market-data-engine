@@ -445,7 +445,9 @@ class SavedExecuteParityTests(SavedBase):
         self.assertEqual(
             out,
             {"query": "Q5-association", "security_id": "INE002A01018", "series": None, "symbol": None,
-             "associations_present": documents is not None, "record_count": len(rows), "records": list(rows)},
+             "associations_present": documents is not None,
+             "continuity": {"format": "w2-trading-symbol-associations/1.0", "baseline_manifest_sha256": self.handle.manifest_digest, "availability": "available", "reason": None},
+             "record_count": len(rows), "records": list(rows)},
         )
 
     def test_q5_parity_by_symbol_series(self):

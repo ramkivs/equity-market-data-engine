@@ -55,7 +55,7 @@ function makeContext(handlers) {
       value: "",
       hidden: false,
       className: "",
-      addEventListener() {},
+      addEventListener(type, fn) { this["on" + type] = fn; },
       setAttribute() {},
       removeAttribute() {},
       querySelectorAll: () => [],
@@ -85,7 +85,7 @@ function makeContext(handlers) {
     if (path === "/api/query") {
       const h = handlers.query[body && body.mode];
       if (!h) throw new Error("unstubbed query mode " + (body && body.mode));
-      return respond(h);
+      return respond(typeof h === "function" ? await h() : h);
     }
     throw new Error("unstubbed fetch " + path);
   };
@@ -293,6 +293,69 @@ async function main() {
     const el = elements;
     check("E1 all four regions error", ["dash-rows-year", "dash-segments", "dash-coverage", "dash-archives"].every((id) => el[id].innerHTML.includes("state-error")));
     check("E2 no data rendered", !el["dash-rows-year"].innerHTML.includes("5,689,949"));
+  }
+
+  /* B4: real inspector markup, escaping, and async Explorer summary. */
+  {
+    const handlers = allOk();
+    const { ctx, elements: el } = makeContext(handlers);
+    vm.runInContext(`S.expl.results.selected = 0; S.expl.results.rows = [{}];
+      S.expl.inspector.detail = {row: {source_values: {listing_symbol: '<img src=x>'}, flags: [], units_provenance_note: '<actual note>'}, archive: {}};
+      renderInspector()`, ctx);
+    let html = el["expl-inspector"].innerHTML;
+    check("B4 inspector chip markup is live", html.includes('<span class="chip unavail">') && html.includes('<span class="chip ok">'));
+    check("B4 source and units escaped", html.includes('&lt;img src=x&gt;') && html.includes('&lt;actual note&gt;') && !html.includes('<img src=x>'));
+    vm.runInContext("S.expl.inspector.detail.row.units_provenance_note = null; renderInspector()", ctx);
+    check("B4 missing units unavailable", el["expl-inspector"].innerHTML.includes('Units and provenance</td><td class="v "><span class="chip unavail">unavailable'));
+    check("B4 EQ legacy preset no segment", vm.runInContext('JSON.stringify(quickFilterParams("EQ (all)"))', ctx).includes('"series":"EQ"}') );
+    vm.runInContext(`S.page = 'explorer'; S.dash.loading = true; renderDatasetSummary()`, ctx);
+    check("B4 summary loading", el["expl-dataset"].innerHTML.includes('state-loading'));
+    vm.runInContext(`S.dash.loading = false; S.dash.q1Error = {check:'Q1', message:'bad <error>'}; renderDatasetSummary()`, ctx);
+    check("B4 summary error and retry", el["expl-dataset"].innerHTML.includes('&lt;error&gt;') && el["expl-dataset"].innerHTML.includes('dataset-retry'));
+    el["dataset-retry"].onclick();
+    check("B4 retry loading", el["expl-dataset"].innerHTML.includes('state-loading'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    check("B4 retry updates explorer", !el["expl-dataset"].innerHTML.includes('state-error') && !el["expl-dataset"].innerHTML.includes('state-loading'));
+    vm.runInContext(`S.dash.q9 = {archives:[{sequence:1, member_name:'a', d01:{series_counts:{'EQ':1, '<img src=x>':1}}}]}; S.dash.q9Error = null; renderArchives()`, ctx);
+    check("B4 archive series escaped", el["dash-archives"].innerHTML.includes('&lt;img src=x&gt;') && !el["dash-archives"].innerHTML.includes('<img src=x>'));
+    check("B4 archive options individual", el["archive-segment"].innerHTML.includes('>EQ</option>') && el["archive-segment"].innerHTML.includes('&lt;img src=x&gt;'));
+  }
+
+  {
+    const handlers = allOk();
+    const q1 = handlers.query["Q1-dataset"];
+    let release;
+    handlers.query["Q1-dataset"] = () => new Promise((resolve) => { release = resolve; });
+    const {ctx, elements: el} = makeContext(handlers);
+    vm.runInContext("S.page = 'explorer'", ctx);
+    const loading = vm.runInContext("loadDashboard()", ctx);
+    vm.runInContext("renderDatasetSummary()", ctx);
+    check("B4 delayed Q1 shows loading", el["expl-dataset"].innerHTML.includes('state-loading'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    release(q1);
+    await loading;
+    check("B4 delayed Q1 completes Explorer", !el["expl-dataset"].innerHTML.includes('state-loading') && el["expl-dataset"].innerHTML.includes('Total rows'));
+  }
+  {
+    const handlers = allOk();
+    const q1 = handlers.query["Q1-dataset"];
+    handlers.query["Q1-dataset"] = err({check:'Q1', message:'failed'});
+    const {ctx, elements: el} = makeContext(handlers);
+    vm.runInContext("S.page = 'explorer'", ctx);
+    await vm.runInContext("loadDashboard()", ctx);
+    check("B4 real failed Q1 shows retry", el["expl-dataset"].innerHTML.includes('dataset-retry'));
+    handlers.query["Q1-dataset"] = q1;
+    el["dataset-retry"].onclick();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    check("B4 real failure retry recovers", el["expl-dataset"].innerHTML.includes('Total rows'));
+  }
+  {
+    const {ctx} = makeContext(allOk());
+    vm.runInContext(`S.dash.q9 = {archives:[{sequence:1, member_name:'a', d01:{series_counts:{EQ:1}}}]};
+      S.dash.archiveSelection = 0;
+      switchPage = () => {}; setBuilderMode = () => {}; renderQ4Rows = () => {}; renderArchiveDetail();
+      document.getElementById('adv-canonical').onclick();`, ctx);
+    check("B4 archive action uses series", vm.runInContext("S.expl.builder.q4[0].field === 'series' && S.expl.builder.q4[0].value === 'EQ'", ctx));
   }
 
   console.log(failures === 0 ? "HARNESS OK" : "HARNESS FAILED (" + failures + " failures)");

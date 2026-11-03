@@ -126,6 +126,7 @@ class QueryPathTests(UiApiBase):
                 "series": "EQ",
                 "symbol": "RELIANCE",
                 "associations_present": documents is not None,
+                "continuity": {"format": "w2-trading-symbol-associations/1.0", "baseline_manifest_sha256": self.handle.manifest_digest, "availability": "available", "reason": None},
                 "record_count": len(rows),
                 "records": list(rows),
             },

@@ -17,7 +17,7 @@ const MODE = {
   Q8: "Q8-data-quality", Q9: "Q9-archive-inventory", Q10: "Q10-qualification",
 };
 const Q4_FIELDS = ["series", "segment", "source", "instrument_type", "symbol"];
-const QUICK_FILTERS = ["EQ (CM)", "EQ (FO)", "Debt", "Currency", "Latest 1Y", "Latest 3Y", "Latest 5Y", "Latest 10Y", "Reliable Only"];
+const QUICK_FILTERS = ["EQ (all)", "CM segment", "FO segment", "Debt", "Currency", "Latest 1Y", "Latest 3Y", "Latest 5Y", "Latest 10Y", "Reliable Only"];
 const SEGMENT_COLORS = ["#3B82F6", "#FF813D", "#F4C83D", "#FF716D", "#20D18A", "#8FA7BD"];
 const COMPACT_NUM = (n) => {
   if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, "") + "B";
@@ -131,7 +131,7 @@ function rowsByYear(partitions) {
 }
 
 function segmentCounts(archives) {
-  const bySeg = {};
+  const bySeg = Object.create(null);
   for (const rec of archives || []) {
     const d01 = rec && rec.d01;
     if (!d01 || typeof d01.series_counts !== "object" || d01.series_counts === null) continue;
@@ -193,10 +193,8 @@ function pricePoints(rows, field) {
 }
 
 function quickFilterParams(name, maxYear) {
-  if (name === "EQ (CM)") return { mode: MODE.Q4, params: { filters: { series: "EQ", segment: "CM" } } };
-  if (name === "EQ (FO)") return { mode: MODE.Q4, params: { filters: { series: "EQ", segment: "FO" } } };
-  if (name === "Debt") return { mode: MODE.Q4, params: { filters: { instrument_type: "DEP" } } };
-  if (name === "Currency") return { mode: MODE.Q4, params: { filters: { instrument_type: "CCY" } } };
+  if (name === "EQ (all)") return { mode: MODE.Q4, params: { filters: { series: "EQ" } } };
+  if (name === "CM segment") return { mode: MODE.Q4, params: { filters: { segment: "CM" } } };
   if (name.startsWith("Latest ")) {
     const n = parseInt(name.slice("Latest ".length, -1), 10);
     if (![1, 3, 5, 10].includes(n) || maxYear === null || maxYear === undefined) return null;
@@ -324,7 +322,7 @@ function donutChart(entries) {
   });
   out += svgEl("text", { x: cx, y: cy - 2, "text-anchor": "middle", fill: "#F2F6FC", "font-size": 15, "font-weight": 650 }, COMPACT_NUM(total));
   out += svgEl("text", { x: cx, y: cy + 12, "text-anchor": "middle", class: "axis-label" }, "rows");
-  return "<svg viewBox=\"0 0 " + W + " " + H + "\" width=\"100%\" role=\"img\" aria-label=\"Archives by exchange segment donut chart\">" + out + "</svg>";
+  return "<svg viewBox=\"0 0 " + W + " " + H + "\" width=\"100%\" role=\"img\" aria-label=\"Rows by published series code donut chart\">" + out + "</svg>";
 }
 
 function lineChart(points, volume) {
@@ -459,6 +457,7 @@ async function loadDashboard() {
   d.loading = false;
   d.loaded = d.errors.length === 0;  /* a failed load stays retryable */
   renderDashboard();
+  if (S.page === "explorer") renderDatasetSummary();
   updateStatusBar();
 }
 
@@ -562,7 +561,7 @@ function renderDashboard() {
   } else {
     const segs = segmentCounts(d.q9 ? d.q9.archives : []);
     if (!segs.length) {
-    $("dash-segments").innerHTML = stateHtml("unavailable", "Segment breakdown unavailable — no served D01 series_counts for this baseline.");
+    $("dash-segments").innerHTML = stateHtml("unavailable", "Series breakdown unavailable — no served D01 series_counts for this baseline.");
   } else {
     const total = segs.reduce((s, e) => s + e.row_count, 0);
     $("dash-segments").innerHTML = donutChart(segs) + "<div class=\"seg-legend\">" + segs.map((e, i) =>
@@ -593,7 +592,7 @@ function renderDashboard() {
     kvRow("Total archives", cov.total_archives) +
     kvRow("Total rows", cov.total_rows) +
     kvRow("Instruments", cov.instruments) +
-    kvRow("Exchange segments", cov.exchange_segments ? cov.exchange_segments.join(", ") : null) +
+    kvRow("Published series codes", cov.exchange_segments ? cov.exchange_segments.join(", ") : null) +
     "</div>" + (cov.partition_years.length ? "<div class=\"muted\" style=\"font-size:10.5px;margin-top:6px\">partition years: " + cov.partition_years.join(", ") + "</div>" : "") +
     dashFailureHtml(covFailures, true);
 
@@ -630,7 +629,7 @@ function renderArchives() {
       String(r.sequence !== undefined ? r.sequence : "").includes(q)
     ));
   }
-  if (d.archiveSegment) rows = rows.filter((r) => archiveSegmentOf(r).split("+").includes(d.archiveSegment));
+  if (d.archiveSegment) rows = rows.filter((r) => Object.keys((r.d01 && r.d01.series_counts) || {}).includes(d.archiveSegment));
   if (d.archiveYear) rows = rows.filter((r) => archiveYearOf(r) === d.archiveYear);
   const key = d.sortKey, dir = d.sortDir;
   rows.sort((a, b) => {
@@ -647,10 +646,10 @@ function renderArchives() {
   });
 
   /* filter options (from served values only) */
-  const segSet = [...new Set(archives.map(archiveSegmentOf).filter(Boolean))].sort();
+  const segSet = [...new Set(archives.flatMap((r) => Object.keys((r.d01 && r.d01.series_counts) || {})))].sort();
   const yearSet = [...new Set(archives.map(archiveYearOf).filter(Boolean))].sort();
   const segSel = $("archive-segment");
-  segSel.innerHTML = '<option value="">All segments</option>' + segSet.map((s) => '<option' + (d.archiveSegment === s ? " selected" : "") + ">" + esc(s) + "</option>").join("");
+  segSel.innerHTML = '<option value="">All series codes</option>' + segSet.map((s) => '<option' + (d.archiveSegment === s ? " selected" : "") + ">" + esc(s) + "</option>").join("");
   const yearSel = $("archive-year");
   yearSel.innerHTML = '<option value="">All years</option>' + yearSet.map((s) => '<option' + (d.archiveYear === s ? " selected" : "") + ">" + esc(s) + "</option>").join("");
   $("archive-count").textContent = rows.length + " of " + archives.length + " archives";
@@ -659,7 +658,7 @@ function renderArchives() {
   const ind = (k) => d.sortKey === k ? '<span class="sort-ind">' + (dir > 0 ? "▲" : "▼") + "</span>" : "";
   const head = (label, key, cls) => '<th class="sortable ' + (cls || "") + '" data-sort="' + key + '" title="Sort by ' + label + '">' + label + " " + ind(key) + "</th>";
   let html = "<table class=\"data\" id=\"archive-table\"><thead><tr>" +
-    "<th>#</th>" + head("Archive", "name") + head("Date", "date") + head("Segment", "segment") +
+    "<th>#</th>" + head("Archive", "name") + head("Date", "date") + head("Series codes", "segment") +
     head("Symbols", "symbols", "num") + "<th>Status</th>" + head("Rows", "rows", "num") + head("File Size", "size", "num") +
     "</tr></thead><tbody>";
   rows.forEach((r, i) => {
@@ -669,7 +668,7 @@ function renderArchives() {
       "<td class=\"num muted\">" + (i + 1) + "</td>" +
       "<td class=\"mono\" title=\"" + esc(r.member_name || "") + "\">" + esc(r.member_name || "") + "</td>" +
       "<td>" + esc(r.date_from_filename || "—") + "</td>" +
-      "<td>" + (seg ? seg : '<span class="muted">—</span>') + "</td>" +
+      "<td>" + (seg ? esc(seg) : '<span class="muted">—</span>') + "</td>" +
       "<td class=\"num\">" + (r.d01 && r.d01.symbol_count !== undefined ? fmtInt(r.d01.symbol_count) : '<span class="muted">—</span>') + "</td>" +
       "<td>" + (verified ? '<span class="chip ok">verified</span>' : '<span class="chip unavail">d01 absent</span>') + "</td>" +
       "<td class=\"num\">" + fmtInt(r.data_lines || 0) + "</td>" +
@@ -709,7 +708,7 @@ function renderArchiveDetail() {
       archiveSegmentOf(r).toLowerCase().includes(q)
     ));
   }
-  if (d.archiveSegment) rows = rows.filter((r) => archiveSegmentOf(r).split("+").includes(d.archiveSegment));
+  if (d.archiveSegment) rows = rows.filter((r) => Object.keys((r.d01 && r.d01.series_counts) || {}).includes(d.archiveSegment));
   if (d.archiveYear) rows = rows.filter((r) => archiveYearOf(r) === d.archiveYear);
   rows.sort((a, b) => {
     let va, vb;
@@ -749,7 +748,7 @@ function renderArchiveDetail() {
     "</table></div>";
   const segs = d01 && d01.series_counts ? Object.keys(d01.series_counts).sort() : [];
   html += "<div class=\"insp-group\"><div class=\"insp-group-title\">Actions</div><div class=\"insp-actions\">" +
-    '<button class="btn btn-small" id="adv-canonical" title="Open the Data Explorer with this archive\'s segment pre-applied as a Q4 exact-value filter">Canonical Data</button>' +
+    '<button class="btn btn-small" id="adv-canonical" title="Open the Data Explorer with a series filter only when this archive has exactly one published series code; this is not an archive filter">Canonical Data</button>' +
     '<button class="btn btn-small" id="adv-identity" title="Open the Data Explorer — related records (Q5) are shown per selected record">Identity / Association</button>' +
     '<button class="btn btn-small" disabled title="Unavailable — no authorized per-archive calendar overlay operation exists.">Calendar Overlay</button>' +
     '<button class="btn btn-small" id="adv-recon" title="Open the Data Explorer quality view (Q8 reconciliation aggregates)">Reconciliation</button>' +
@@ -760,7 +759,7 @@ function renderArchiveDetail() {
     switchPage("explorer");
     if (seg) {
       setBuilderMode(MODE.Q4);
-      S.expl.builder.q4 = [{ field: "segment", value: seg }];
+      S.expl.builder.q4 = [{ field: "series", value: seg }];
       renderQ4Rows();
     }
   });
@@ -816,9 +815,10 @@ function renderQ4Rows() {
 function renderQuickPills() {
   const box = $("q-quick");
   box.innerHTML = QUICK_FILTERS.map((name) => {
-    const unavailable = name === "Reliable Only";
+    const unavailable = ["Reliable Only", "Debt", "Currency", "FO segment"].includes(name);
+    const reason = name === "Reliable Only" ? "Unavailable — no reliability classification exists." : "Unavailable — no verified exact mapping is published for this preset.";
     return '<button class="quick-pill' + (S.expl.builder.quick === name ? " active" : "") + '" data-quick="' + esc(name) + '"' +
-      (unavailable ? ' disabled title="Unavailable — no reliability classification exists in the first-release serving contract (the preset is never approximated)."' :
+      (unavailable ? ' disabled title="' + esc(reason) + '"' :
         ' title="Latest N years" data-note="data-relative to the served partition years"') + ">" + esc(name) + "</button>";
   }).join("");
   box.querySelectorAll(".quick-pill").forEach((pill) => {
@@ -1104,6 +1104,7 @@ function renderInspector() {
   const fs = flagStatus(row.flags);
   const assocCount = insp.related && insp.related.record_count !== undefined ? insp.related.record_count : null;
   const kv = (k, v, cls) => "<tr><td class=\"k\">" + esc(k) + "</td><td class=\"v " + (cls || "") + "\">" + (v === null || v === undefined ? '<span class="chip unavail">unavailable</span>' : esc(String(v))) + "</td></tr>";
+  const chip = (k, text, type) => "<tr><td class=\"k\">" + esc(k) + "</td><td class=\"v\"><span class=\"chip " + type + "\">" + esc(text) + "</span></td></tr>";
   let html = "<div class=\"insp-group\"><div class=\"insp-group-title\">Instrument</div><table class=\"kv-table\">" +
     kv("Observed ticker", ((d.row.serving || {}).trading_symbol || {}).observed_symbol, "mono") +
     kv("Ticker source", ((d.row.serving || {}).trading_symbol || {}).source_column) +
@@ -1113,12 +1114,12 @@ function renderInspector() {
     kv("Trade Date", row.business_date, "mono") + kv("Segment", vs.segment) +
     kv("Open", vs.price_open, "mono") + kv("High", vs.price_high, "mono") + kv("Low", vs.price_low, "mono") + kv("Close", vs.price_close, "mono") +
     kv("Volume", vs.traded_quantity, "mono") + kv("Turnover (₹)", vs.traded_value, "mono") +
-    kv("Trading Status", '<span class="chip unavail">not a canonical field — unavailable</span>') +
+    chip("Trading Status", "not a canonical field — unavailable", "unavail") +
     "</table></div>";
   html += "<div class=\"insp-group\"><div class=\"insp-group-title\">Data Quality</div><table class=\"kv-table\">" +
     kv("Identity Status", (row.isin_validity || "unavailable") + (row.isin_normalized ? " (" + row.isin_normalized + ")" : ""), "mono") +
-    kv("Record Status", fs.state === "flagged" ? '<span class="chip warn">' + esc(fs.text) + "</span>" : '<span class="chip ok">no flags</span>') +
-    kv("Association Status", assocCount === null ? '<span class="chip unavail">unavailable (no selector pair on row)</span>' : (assocCount > 0 ? assocCount + " interval" + (assocCount === 1 ? "" : "s") : "none for this instrument")) +
+    chip("Record Status", fs.state === "flagged" ? fs.text : "no flags", fs.state === "flagged" ? "warn" : "ok") +
+    (assocCount === null ? chip("Association Status", "unavailable (no selector pair on row)", "unavail") : kv("Association Status", assocCount > 0 ? assocCount + " interval" + (assocCount === 1 ? "" : "s") : "none for this instrument")) +
     "</table></div>";
   html += "<div class=\"insp-group\"><div class=\"insp-group-title\">Provenance (D05 §8 block, as served)</div><table class=\"kv-table\">" +
     kv("Source Archive", prov.member_name, "mono") + kv("Source Row", row.source_line_number, "mono") +
@@ -1127,7 +1128,21 @@ function renderInspector() {
     kv("SHA-256 basis", prov.archive_sha256_basis) +
     kv("Member SHA-256 (raw)", prov.member_sha256_raw_bytes, "mono") +
     kv("Format family", prov.format_family) + kv("Run ID", prov.run_id, "mono") +
+    kv("Units and provenance", row.units_provenance_note) +
     "</table><div class=\"muted\" style=\"font-size:10.5px;margin-top:4px\">Fields absent from the canonical row contract (e.g., company id/name) are not shown — they are not published, and no placeholder is substituted.</div></div>";
+  if (insp.related && insp.related.continuity) {
+    const c = insp.related.continuity;
+    html += "<div class=\"insp-group\"><div class=\"insp-group-title\">Trading-symbol continuity (" + esc(c.format) + ")</div>" +
+      "<div>" + esc(c.availability) + (c.reason ? " — " + esc(c.reason) : "") + "</div>";
+    for (const rec of (insp.related.records || [])) {
+      for (const group of ((rec.serving || {}).continuity || [])) {
+        html += "<div class=\"rel-item\">" + esc(group.series) + " · " + esc(group.status) + ": " +
+          group.intervals.map((i) => esc(i.symbol) + " (" + esc(i.observed_from) + " → " + esc(i.observed_to) + ")").join(", ") +
+          (group.ambiguities.length ? " · " + group.ambiguities.map(esc).join("; ") : "") + "</div>";
+      }
+    }
+    html += "</div></div>";
+  }
   if (insp.related && insp.related.record_count > 0) {
     html += "<div class=\"insp-group\"><div class=\"insp-group-title\">Related Records (Q5, as published)</div><div class=\"rel-list\">";
     for (const rec of insp.related.records.slice(0, 8)) {
@@ -1466,14 +1481,23 @@ function switchPage(page) {
   if (page === "dashboard") loadDashboard();
   if (page === "explorer") {
     loadQuality();
-    if (!S.expl.datasetLoaded) renderDatasetSummary();
+    if (!S.dash.loaded && !S.dash.loading) loadDashboard();
+    renderDatasetSummary();
     if (!S.expl.saved.loaded && !S.expl.saved.loading && !S.expl.saved.error) loadSaved();
   }
 }
 
 function renderDatasetSummary() {
-  S.expl.datasetLoaded = true;
   const el = $("expl-dataset");
+  if (S.dash.loading) { el.innerHTML = stateHtml("loading", "Loading dataset summary…"); return; }
+  if (S.dash.q1Error) {
+    el.innerHTML = stateHtml("error", {check: S.dash.q1Error.check || "", detail: S.dash.q1Error.message}) +
+      '<button class="btn btn-small" id="dataset-retry">Retry dataset summary</button>';
+    $("dataset-retry").addEventListener("click", () => { loadDashboard(); renderDatasetSummary(); });
+    return;
+  }
+  if (!S.dash.q1) { el.innerHTML = stateHtml("unavailable", "Dataset summary unavailable."); return; }
+  S.expl.datasetLoaded = true;
   const cov = coverageSummary(
     S.dash.q1 ? S.dash.q1.partitions : [],
     S.dash.q6 && S.dash.q6.calendar_present ? S.dash.q6.records : [],
