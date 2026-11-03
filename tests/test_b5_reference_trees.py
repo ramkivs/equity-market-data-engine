@@ -27,6 +27,8 @@ class ReferenceTreePublicationTests(unittest.TestCase):
         payload = dict(selected[0].payload)
         for name in ('delta', 'evidence', 'w2_delta', 'b2_delta', 'w2_overrides', 'b3_overrides'):
             payload[name] = dict(payload[name].references)
+        payload.pop('ticker_trees')
+        payload['symbol_delta'] = {'observations': payload['symbol_delta']['observations']}
         payload.pop('derived_trees')
         payload.pop('reference_trees'); payload.pop('index_delta'); payload.pop('index'); payload.pop('symbol_catalog')
         payload['format'] = 'catalog-composite/8.0'

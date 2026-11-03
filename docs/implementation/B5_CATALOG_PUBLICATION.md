@@ -54,7 +54,7 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
 
 ## Scope limits — no B5 completion claim
 
-* Catalog-backed generation format 10 stores incremental canonical rows and
+* Catalog-backed generation format 11 stores incremental canonical rows and
   evidence once as content-addressed SQLite blobs. Later publications refer to
   existing blobs without reading or copying their contents. Readers verify each
   accessed blob against its generation-pinned digest; old blobs remain available
@@ -77,8 +77,9 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   to an immutable content-addressed trie in the publication transaction. Format-8
   row/evidence reference maps migrate once to their own immutable trie roots.
   Format-9 identity-group and override reference maps migrate to four further
-  trie roots. Migration validates the old reference censuses and does not reread
-  historical canonical data or prior source archives.
+  trie roots. Format-10 incremental ticker censuses migrate to ticker/series,
+  identity/series, and ticker-directory trees. Migration validates the old
+  censuses and does not reread historical canonical data or prior source archives.
 * W2 and B2 incremental projections are stored as content-addressed per-identity
   groups. Later publication reads and rewrites only groups affected by the new
   rows or ticker ambiguity; unaffected group contents are not copied or read.
@@ -92,8 +93,12 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   access, and old versions remain available to pinned readers. Override reference
   maps also use immutable tries; explicit registry binding verifies all retained
   override blobs.
-* Generation JSON keeps the incremental ticker census only, not another copy
-  of the baseline census. A one-time, no-replace proof bootstrap copies the
+* Generation JSON pins immutable incremental ticker/series, identity/series and
+  ticker-directory tree roots, rather than embedding either ticker census.
+  Publication merges affected groups and checks reciprocal prior observations;
+  readers validate selected groups and reciprocal evidence. Explicit registry
+  binding fully traverses all incremental ticker trees, cross-checks their
+  complete censuses, and compares them with retained validated incremental rows. A one-time, no-replace proof bootstrap copies the
   already-verified compact baseline ticker census to a separate bound SQLite
   lookup file, without canonical-row or archive reads. Format-7 readers and
   publishers verify its group manifest, then load and verify only the selected
@@ -113,11 +118,11 @@ bounded-delta migration, not a solution to accumulated-delta rematerialization.
   garbage-collect superseded index or reference trie nodes. Each changed key
   writes up to 65 content-addressed trie nodes per tree, so storage grows over
   time.
-* This is **not yet fully delta-only**: the incremental ticker census and
-  candidate records remain together in each generation JSON. Publication still validates
-  and scans the compact ticker-group manifest, and copies/serializes accumulated
-  incremental structures; targeted lookups also filter the incremental ticker
-  census. Readers still compose and scan the complete index metadata, though
+* This is **not yet fully delta-only**: accumulated candidate records remain
+  together in each generation JSON. Publication still validates and scans the
+  compact baseline ticker-group manifest, and copies/serializes candidate data.
+  Affected ticker/identity groups can grow without bound and are rewritten as
+  whole groups. Readers still compose and scan the complete index metadata, though
   neither path rereads historical canonical rows for this work. Very large or numerous deltas can still hit memory or SQLite
   single-value limits. No scalable long-running lifecycle is established.
 * The original qualified historical canonical baseline is not reread during
@@ -176,7 +181,7 @@ This exceeds the former total 20,000-row guard, but is **not** an M2-scale test
 or a resource claim for approximately 5.7 million rows. No qualified M2 data was
 accessed or modified, and no historical archive was ingested.
 
-Linux disposable-fixture suite: **1077 tests run, 14 skipped**; existing
+Linux disposable-fixture suite: **1084 tests run, 14 skipped**; existing
 unrelated ResourceWarnings remain. Windows validation remains pending.
 
 The scoped-reader tests exercise calendar gap/holiday preservation, UDiFF date
@@ -253,3 +258,10 @@ updates, immutable pinned roots, group/override tree corruption and transactiona
 format-9 migration with rollback/retry and pending inputs. Selection still
 traverses all four derived reference trees to validate their complete censuses;
 the increment does not claim bounded reader startup or B5 completion.
+
+`tests/test_b5_ticker_delta_trees.py` covers targeted publication and Q3/Q4/Q5,
+valid-identity overlap and uncorrelated observations, selected corruption, full
+cross-projection verification, and transactional format-10 migration with
+rollback/retry and pinned readers. Readers still traverse the separate index,
+row/evidence and derived-reference trees during selection; the ticker trees
+are fully traversed only on explicit full inspection or registry binding.

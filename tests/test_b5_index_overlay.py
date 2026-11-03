@@ -28,6 +28,8 @@ class IndexOverlayTests(unittest.TestCase):
         payload = dict(selected.payload)
         for key in ('delta', 'evidence', 'w2_delta', 'b2_delta', 'w2_overrides', 'b3_overrides'):
             payload[key] = dict(payload[key].references)
+        payload.pop('ticker_trees')
+        payload['symbol_delta'] = {'observations': payload['symbol_delta']['observations']}
         payload.pop('derived_trees')
         payload.pop('reference_trees')
         payload.pop('index_tree')

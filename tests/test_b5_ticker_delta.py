@@ -27,6 +27,8 @@ class TickerDeltaTests(unittest.TestCase):
         payload = dict(selected.payload)
         for key in ('delta', 'evidence', 'w2_delta', 'b2_delta', 'w2_overrides', 'b3_overrides'):
             payload[key] = dict(payload[key].references)
+        payload.pop('ticker_trees')
+        payload['symbol_delta'] = {'observations': payload['symbol_delta']['observations']}
         payload.pop('derived_trees')
         payload.pop('reference_trees')
         payload.pop('index_tree')
@@ -48,8 +50,9 @@ class TickerDeltaTests(unittest.TestCase):
         with sqlite3.connect(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT payload FROM composite_generations WHERE id=?', (first['generation'],)).fetchone()[0])
         self.assertNotIn('symbol_catalog', payload)
-        self.assertIn('symbol_delta', payload)
-        self.assertLess(len(payload['symbol_delta']['observations']), len(old[0].payload['symbol_catalog']['observations']))
+        self.assertNotIn('symbol_delta', payload)
+        self.assertIn('ticker_trees', payload)
+        self.assertLess(len(old[0].payload['symbol_delta']['observations']), len(old[0].payload['symbol_catalog']['observations']))
         recomputed = build_symbol_catalog(old[0], old[1])
         self.assertEqual(set(map(tuple, recomputed['observations'])), set(map(tuple, old[0].payload['symbol_catalog']['observations'])))
         self.source.unlink(); self.next_delta()
@@ -117,8 +120,7 @@ class TickerDeltaTests(unittest.TestCase):
         self.init(); publish(*self.args)
         with sqlite3.connect(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT g.payload FROM composite_active a JOIN composite_generations g ON g.id=a.generation').fetchone()[0])
-            payload['symbol_delta']['observations'][0][4] = 'not-a-date'
-            # For an uncorrelated row, any date is also invalid.
+            payload['ticker_trees']['tickers']['count'] = -1
             text = _json(payload); bad_id = _sha(text)
             db.execute('INSERT INTO composite_generations VALUES (?,?)', (bad_id, text))
             db.execute('UPDATE composite_active SET generation=?', (bad_id,))

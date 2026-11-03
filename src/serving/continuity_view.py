@@ -13,7 +13,7 @@ _lock = Lock()
 
 def get_continuity(baseline, index):
     if hasattr(baseline, 'payload'):
-        if baseline.payload.get('format') in ('catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0'):
+        if baseline.payload.get('format') in ('catalog-composite/1.0', 'catalog-composite/2.0', 'catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0'):
             return {'format': FORMAT, 'baseline_manifest_sha256': baseline.original.manifest_digest,
                     'availability': 'available', 'reason': None}, _CatalogGroups(baseline)
         document = baseline.payload['b3']

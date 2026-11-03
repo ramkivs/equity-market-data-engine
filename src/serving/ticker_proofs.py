@@ -150,7 +150,7 @@ class TargetedCatalog:
                 groups = self.groups
             base = selected(db, groups, kind, value, series)
             index = 0 if kind == 'ticker' else 2
-            extra = [row for row in self.delta['observations'] if row[index] == value and row[1] == series]
+            extra = (self.delta.ticker_observations(value, series) if kind == 'ticker' else self.delta.identity_observations(value, series)) if hasattr(self.delta, 'ticker_observations') else [row for row in self.delta['observations'] if row[index] == value and row[1] == series]
             return merge_ticker_catalogs({'observations': base}, {'observations': extra})['observations']
         except (sqlite3.Error, ValueError, OSError) as exc:
             raise QueryError('composite-unavailable', 'targeted ticker lookup failed: %s' % exc) from exc
@@ -164,7 +164,8 @@ class TargetedCatalog:
         try:
             if groups is None:
                 db, _, groups = open_proofs(self.state, self.catalog_meta, self.proof_meta)
-            return {series for kind, selector, series in groups if kind == 'ticker' and selector == ticker} | {row[1] for row in self.delta['observations'] if row[0] == ticker}
+            delta_series = self.delta.ticker_series(ticker) if hasattr(self.delta, 'ticker_series') else {row[1] for row in self.delta['observations'] if row[0] == ticker}
+            return {series for kind, selector, series in groups if kind == 'ticker' and selector == ticker} | delta_series
         except (sqlite3.Error, ValueError, OSError) as exc:
             raise QueryError('composite-unavailable', 'ticker series lookup failed: %s' % exc) from exc
         finally:
@@ -191,7 +192,7 @@ class TargetedCatalog:
                 _feed(digest, _json(list(row)))
             if len(rows) != self.catalog_meta['ticker_count'] or digest.hexdigest() != self.catalog_meta['ticker_sha256']:
                 raise ValueError('full ticker proof census mismatch')
-            return merge_ticker_catalogs({'observations': rows}, self.delta)['observations']
+            return merge_ticker_catalogs({'observations': rows}, {'observations': self.delta['observations']})['observations']
         except (sqlite3.Error, ValueError, OSError) as exc:
             raise QueryError('composite-unavailable', 'ticker census read failed: %s' % exc) from exc
         finally:
@@ -243,7 +244,7 @@ def recover(baseline, state, registry, saved, history, source_roots):
         if row is None or generation_sha(row[1]) != row[0]:
             raise CatalogError('active generation missing or invalid')
         payload = json.loads(row[1])
-        if payload.get('format') not in ('catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0') or payload.get('baseline_manifest_sha256') != baseline.manifest_digest or not isinstance(payload.get('ticker_proofs_binding'), dict):
+        if payload.get('format') not in ('catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0') or payload.get('baseline_manifest_sha256') != baseline.manifest_digest or not isinstance(payload.get('ticker_proofs_binding'), dict):
             raise CatalogError('active generation has no valid ticker proof binding')
         catalog_db, catalog_meta = open_catalog(baseline, state)
         catalog_db.execute('BEGIN')

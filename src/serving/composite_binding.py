@@ -104,24 +104,37 @@ def validate_registry(baseline, state_root, registry_root):
             if not isinstance(candidates, list) or not isinstance(delta, Mapping) or not isinstance(evidence, Mapping):
                 raise ValueError('active generation evidence is invalid')
             identities, sources, digests = set(), set(), set()
-            for item in candidates:
-                identity = (item['file_name'], item['date'], item['digest'])
-                source = 'incremental/' + item['digest'] + '.rows.jsonl'
-                entry = accepted.get(identity)
-                if identity in identities or item['digest'] in digests or entry is None or any(entry.get(k) != v for k, v in item.items()):
-                    raise ValueError('active generation disagrees with accepted registry')
-                _validate(item, delta[source], evidence[item['digest']], baseline)
-                identities.add(identity); sources.add(source); digests.add(item['digest'])
+            def retained_rows():
+                for item in candidates:
+                    identity = (item['file_name'], item['date'], item['digest'])
+                    source = 'incremental/' + item['digest'] + '.rows.jsonl'
+                    entry = accepted.get(identity)
+                    if identity in identities or item['digest'] in digests or entry is None or any(entry.get(k) != v for k, v in item.items()):
+                        raise ValueError('active generation disagrees with accepted registry')
+                    rows = _validate(item, delta[source], evidence[item['digest']], baseline)
+                    identities.add(identity); sources.add(source); digests.add(item['digest'])
+                    for row in rows:
+                        yield source, row
+            if selected.payload.get('format') == 'catalog-composite/11.0':
+                from .catalog_publication import _merge_tickers
+                derived_tickers = _merge_tickers({'observations': []}, retained_rows())
+            else:
+                for _ in retained_rows():
+                    pass
             if identities != set(accepted) or set(delta) != sources or set(evidence) != digests:
                 raise ValueError('active generation has missing or extra accepted evidence')
-            if selected.payload.get('format') in ('catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0'):
+            if selected.payload.get('format') in ('catalog-composite/3.0', 'catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0'):
                 for kind in ('w2_delta', 'b2_delta'):
                     for identity in selected.payload[kind]:
                         selected.payload[kind][identity]  # verify all detached groups during explicit binding
-            if selected.payload.get('format') in ('catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0'):
+            if selected.payload.get('format') in ('catalog-composite/4.0', 'catalog-composite/5.0', 'catalog-composite/6.0', 'catalog-composite/7.0', 'catalog-composite/8.0', 'catalog-composite/9.0', 'catalog-composite/10.0', 'catalog-composite/11.0'):
                 for kind in ('w2_overrides', 'b3_overrides'):
                     for identity in selected.payload[kind]:
                         selected.payload[kind][identity]
+            if selected.payload.get('format') == 'catalog-composite/11.0':
+                actual_tickers = selected.payload['symbol_delta']['observations']  # full tree cross-check
+                if list(derived_tickers['observations']) != list(actual_tickers):
+                    raise ValueError('ticker delta trees disagree with retained incremental rows')
             generation = selected.manifest_digest
         return {'generation': generation, 'accepted_incremental': len(accepted), 'staged': staged_count}
     except Exception as exc:
