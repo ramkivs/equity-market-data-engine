@@ -18,7 +18,8 @@ from .incremental_registry import _db_path, _open
 from .paths import validate_roots, validate_store_root
 from .symbols import _identity, observed_trading_symbol
 
-FORMAT = 'continuity-catalog/1.0'
+LEGACY_FORMAT = 'continuity-catalog/1.0'
+FORMAT = 'continuity-catalog/2.0'
 FILENAME = 'continuity_catalog.sqlite3'
 
 
@@ -69,11 +70,15 @@ def _metadata(db):
         meta = {k: json.loads(v) for k, v in db.execute('SELECT key,value FROM meta')}
         required = {'format', 'baseline_manifest_sha256', 'baseline_index_sha256', 'row_count',
                     'observation_sha256', 'ticker_sha256', 'ticker_count', 'complete'}
-        if set(meta) != required or meta['format'] != FORMAT or meta['complete'] is not True:
+        if meta.get('format') == FORMAT:
+            required |= {'group_sha256', 'group_count'}
+        if set(meta) != required or meta.get('format') not in (LEGACY_FORMAT, FORMAT) or meta['complete'] is not True:
             raise CatalogError('invalid or incomplete catalog metadata')
+        if meta['format'] == FORMAT and (type(meta['group_count']) is not int or meta['group_count'] < 0):
+            raise CatalogError('invalid catalog group count')
         if type(meta['row_count']) is not int or meta['row_count'] < 0 or type(meta['ticker_count']) is not int:
             raise CatalogError('invalid catalog counts')
-        for name in ('baseline_manifest_sha256', 'baseline_index_sha256', 'observation_sha256', 'ticker_sha256'):
+        for name in ('baseline_manifest_sha256', 'baseline_index_sha256', 'observation_sha256', 'ticker_sha256') + (('group_sha256',) if meta['format'] == FORMAT else ()):
             if not isinstance(meta[name], str) or len(meta[name]) != 64 or any(c not in '0123456789abcdef' for c in meta[name]):
                 raise CatalogError('invalid catalog digest')
         return meta
@@ -86,9 +91,9 @@ def _metadata(db):
 def open_catalog(baseline, state):
     """Open an existing catalog read-only; validate its baseline/index binding.
 
-    This checks metadata only; it does not authenticate the lookup indexes.
-    Call ``verify_catalog`` before trusting index-based identity selection.
-    Per-row hashes alone cannot detect a corrupt key that hides a row.
+    This checks metadata and binding only. Version 2 identity lookups verify
+    the compact group manifest and all selected observations before returning.
+    Version 1 requires a full verification or upgrade before trusted selection.
     """
     validate_roots(package=baseline.root, state=state)
     validate_store_root(state, 'state')
@@ -128,20 +133,97 @@ def _check_observation(item):
         raise CatalogError('invalid catalog observation: %s' % exc) from exc
 
 
-def observations_for_identity(db, identity, kind='w2'):
-    """Read affected observations; caller must first fully verify lookup indexes.
+def _group_rows(db):
+    """Compute group hashes by streaming the catalog's two identity indexes."""
+    for kind, column in (('b2', 'b2_identity'), ('w2', 'w2_identity')):
+        previous, digest, count = None, None, 0
+        sql = ('SELECT ' + column + ',ordinal,source_file,source_line,projection_sha256 '
+               'FROM observations WHERE ' + column + ' IS NOT NULL ORDER BY ' + column + ',ordinal')
+        for identity, ordinal, source, line, row_hash in db.execute(sql):
+            if identity != previous:
+                if previous is not None:
+                    yield kind, previous, count, digest.hexdigest()
+                previous, digest, count = identity, hashlib.sha256(), 0
+            _feed(digest, _json([ordinal, source, line, row_hash]))
+            count += 1
+        if previous is not None:
+            yield kind, previous, count, digest.hexdigest()
 
-    Individual hashes cannot detect an index key altered to omit a row.
+
+def _group_digest(rows):
+    digest = hashlib.sha256()
+    count = 0
+    for item in rows:
+        _feed(digest, _json(list(item))); count += 1
+    return digest.hexdigest(), count
+
+
+def _create_groups(db):
+    db.execute('CREATE TABLE identity_groups (kind TEXT NOT NULL, identity TEXT NOT NULL, '
+               'row_count INTEGER NOT NULL, group_sha256 TEXT NOT NULL, PRIMARY KEY(kind,identity))')
+    batch = []
+    for group in _group_rows(db):
+        batch.append(group)
+        if len(batch) >= 1000:
+            db.executemany('INSERT INTO identity_groups VALUES (?,?,?,?)', batch)
+            batch.clear()
+    if batch:
+        db.executemany('INSERT INTO identity_groups VALUES (?,?,?,?)', batch)
+    return _group_digest(db.execute('SELECT kind,identity,row_count,group_sha256 FROM identity_groups ORDER BY kind,identity'))
+
+
+def _validated_groups(db, meta):
+    if meta.get('format') != FORMAT:
+        raise CatalogError('catalog identity proofs unavailable; upgrade catalog first')
+    groups = {}
+    digest = hashlib.sha256()
+    try:
+        for kind, identity, count, group_sha in db.execute('SELECT kind,identity,row_count,group_sha256 FROM identity_groups ORDER BY kind,identity'):
+            item = [kind, identity, count, group_sha]
+            _feed(digest, _json(item))
+            if (kind not in ('w2', 'b2') or not isinstance(identity, str) or not identity or
+                    type(count) is not int or count < 1 or not isinstance(group_sha, str) or len(group_sha) != 64 or
+                    any(c not in '0123456789abcdef' for c in group_sha)):
+                raise CatalogError('invalid catalog identity group')
+            groups[(kind, identity)] = (count, group_sha)
+    except sqlite3.Error as exc:
+        raise CatalogError('catalog identity group read failed: %s' % exc) from exc
+    if len(groups) != meta['group_count'] or digest.hexdigest() != meta['group_sha256']:
+        raise CatalogError('catalog identity group manifest mismatch')
+    return groups
+
+
+def observations_for_identity(db, identity, kind='w2'):
+    """Verify a compact group manifest and only the selected identity rows.
+
+    Row hashes alone cannot detect a corrupt key that hides a row. The separate
+    authenticated count and group digest detect omitted or miskeyed rows. A
+    read transaction pins both the group manifest and observations.
     """
     column = {'w2': 'w2_identity', 'b2': 'b2_identity'}.get(kind)
     if column is None or not isinstance(identity, str) or not identity:
         raise CatalogError('invalid catalog identity selector')
+    started = not db.in_transaction
     try:
+        if started:
+            db.execute('BEGIN')
+        meta = _metadata(db)
+        expected = _validated_groups(db, meta).get((kind, identity))
+        digest = hashlib.sha256()
+        result = []
         for item in db.execute('SELECT * FROM observations WHERE ' + column + '=? ORDER BY ordinal', (identity,)):
-            source, _line, _text, projection = _check_observation(item)
-            yield source, projection
+            source, line, _text, projection = _check_observation(item)
+            _feed(digest, _json([item[0], source, line, item[10]]))
+            result.append((source, projection))
+        actual = (len(result), digest.hexdigest()) if result else None
+        if actual != expected:
+            raise CatalogError('catalog identity group observations mismatch')
+        return iter(result)
     except sqlite3.Error as exc:
         raise CatalogError('catalog observation read failed: %s' % exc) from exc
+    finally:
+        if started and db.in_transaction:
+            db.rollback()
 
 
 def ticker_catalog(db, meta):
@@ -172,11 +254,48 @@ def verify_catalog(baseline, state):
         if count != meta['row_count'] or digest.hexdigest() != meta['observation_sha256']:
             raise CatalogError('catalog observation census or digest mismatch')
         ticker_catalog(db, meta)
+        if meta['format'] == FORMAT:
+            expected_groups = _validated_groups(db, meta)
+            actual_groups = {(kind, identity): (count, digest) for kind, identity, count, digest in _group_rows(db)}
+            if actual_groups != expected_groups:
+                raise CatalogError('catalog identity group observations mismatch')
         return meta
     except sqlite3.Error as exc:
         raise CatalogError('catalog integrity failure: %s' % exc) from exc
     finally:
         db.close()
+
+
+def upgrade_catalog(baseline, state):
+    """Atomically add identity proofs to a verified v1 catalog, once.
+
+    No baseline canonical file or source archive is opened. Existing catalog
+    bytes are never rebuilt from the baseline. A SQLite transaction protects
+    the old format if the migration fails or the process is interrupted.
+    """
+    read_db, meta = open_catalog(baseline, state)
+    read_db.close()
+    path = os.path.join(state, FILENAME)
+    try:
+        db = sqlite3.connect('file:' + quote(os.path.abspath(path), safe='/') + '?mode=rw', uri=True)
+        try:
+            db.execute('PRAGMA synchronous=FULL')
+            db.execute('BEGIN IMMEDIATE')
+            # A second connection verifies the last committed state while this
+            # connection's reserved write lock prevents concurrent modifications.
+            meta = verify_catalog(baseline, state)
+            if meta['format'] == FORMAT:
+                db.commit()
+                return {'status': 'ALREADY-CURRENT', **meta}
+            group_sha, group_count = _create_groups(db)
+            db.execute('UPDATE meta SET value=? WHERE key=?', (_json(FORMAT), 'format'))
+            db.executemany('INSERT INTO meta VALUES (?,?)', [('group_sha256', _json(group_sha)), ('group_count', _json(group_count))])
+            db.commit()
+            return {'status': 'UPGRADED', **dict(meta, format=FORMAT, group_sha256=group_sha, group_count=group_count)}
+        finally:
+            db.close()
+    except sqlite3.Error as exc:
+        raise CatalogError('catalog upgrade failed: %s' % exc) from exc
 
 
 def bootstrap(baseline, state, registry, saved, history, source_roots):
@@ -245,7 +364,9 @@ def bootstrap(baseline, state, registry, saved, history, source_roots):
             ticker_count = 0
             for item in db.execute('SELECT ticker,series,identity,raw_symbol,date_from,date_to FROM tickers ORDER BY ticker,series,identity,raw_symbol'):
                 _feed(ticker_digest, _json(list(item))); ticker_count += 1
-            meta = {'format': FORMAT, 'baseline_manifest_sha256': baseline.manifest_digest,
+            group_sha, group_count = _create_groups(db)
+            meta = {'format': FORMAT, 'group_sha256': group_sha, 'group_count': group_count,
+                    'baseline_manifest_sha256': baseline.manifest_digest,
                     'baseline_index_sha256': index_digest, 'row_count': count, 'observation_sha256': digest.hexdigest(),
                     'ticker_sha256': ticker_digest.hexdigest(), 'ticker_count': ticker_count, 'complete': True}
             db.executemany('INSERT INTO meta VALUES (?,?)', [(key, _json(value)) for key, value in meta.items()])

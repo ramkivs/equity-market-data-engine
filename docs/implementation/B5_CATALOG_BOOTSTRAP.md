@@ -53,15 +53,23 @@ ticker digests, indexed fields and counts without opening canonical row files.
 The command checks the catalog's baseline/index binding. A corrupt or mismatched
 catalog is rejected and never automatically replaced.
 
-`open_catalog` checks metadata and binding only; it does **not** prove that the
-catalog's row/index data are intact. `verify_catalog` must run before trusting
-index-based identity selection: checking hashes only on returned rows cannot
-detect a corrupt index key that has hidden a row. This is an important remaining
-integration constraint for the delta publisher and reader work; the current
-application does not consume the catalog as a serving authority. A future
-implementation must preserve this guarantee without requiring a full historical
-canonical-row scan on every delta. The checksums detect accidental corruption,
-not a hostile actor who can rewrite the catalog and its checksum metadata.
+`open_catalog` checks metadata and binding only; it does **not** prove that all
+catalog rows and indexes are intact. Catalog format 2 adds a digested compact
+identity-group manifest and per-identity counts and digests. A targeted W2 or
+B2 lookup validates that manifest and its selected observations under one SQLite
+read snapshot, detecting missing, miskeyed or corrupted selected rows without
+scanning unrelated historical observations. It reads all compact group
+metadata, not all canonical rows. `catalog-verify` remains available for a full
+catalog check. Checksums detect accidental corruption, not a hostile actor who
+can rewrite the catalog and checksum metadata.
+
+Existing format-1 catalogs are not discarded or silently replaced. Their
+identity lookup fails closed until the `catalog-upgrade` operation verifies the
+existing catalog and adds the group proofs in a single SQLite transaction. It
+scans existing catalog projections once, not canonical rows or archives; an
+interrupted upgrade rolls back. Use the same arguments shown above with
+`catalog-upgrade` in place of `bootstrap`. The existing composite publisher and
+application readers **do not yet use** these proofs or this catalog.
 
 ## Startup verification policy
 

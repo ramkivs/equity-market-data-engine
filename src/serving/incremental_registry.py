@@ -186,6 +186,7 @@ def main(argv=None):
     sub.add_parser('init', help='initialize from verified baseline manifest; never overwrite')
     sub.add_parser('bootstrap', help='one-time baseline continuity catalog bootstrap')
     sub.add_parser('catalog-verify', help='fully verify the baseline continuity catalog')
+    sub.add_parser('catalog-upgrade', help='upgrade a verified continuity catalog with identity proofs')
     sub.add_parser('conflicts', help='list durable unresolved findings')
     sub.add_parser('staged', help='list validated candidates that are not published')
     sub.add_parser('publish', help='publish a bounded Q1-Q5 composite generation')
@@ -215,6 +216,9 @@ def main(argv=None):
         elif args.operation == 'bootstrap':
             from .continuity_catalog import bootstrap
             result = bootstrap(base, args.state, args.registry, args.saved_state, args.history_state, common[-1])
+        elif args.operation == 'catalog-upgrade':
+            from .continuity_catalog import upgrade_catalog
+            result = upgrade_catalog(base, args.state)
         elif args.operation == 'catalog-verify':
             from .continuity_catalog import verify_catalog
             result = verify_catalog(base, args.state)
