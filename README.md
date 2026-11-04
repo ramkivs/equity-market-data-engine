@@ -1,4 +1,8 @@
-\# NSE Historical Data Engine
+\# EquiCore
+
+**Equity Market Data Intelligence & Infrastructure Engine**
+
+Authoritative repository: `https://github.com/ramkivs/equity-market-data-engine.git`.
 
 
 

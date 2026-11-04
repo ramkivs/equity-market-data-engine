@@ -1,4 +1,4 @@
-/* I4 first-release UI — dark navy theme (tokens per the non-authoritative
+/* EquiCore first-release UI — dark navy theme (tokens per the non-authoritative
    design reference §3; the token table is the single source of color). */
 
 :root {
@@ -89,6 +89,15 @@ body {
 
 /* ---------------- frame ---------------- */
 #frame { display: flex; flex: 1; min-height: 0; }
+
+/* ---------------- EquiCore sidebar wordmark ---------------- */
+.nav-brand {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  padding: 0 var(--space-2) 0 var(--space-2);
+}
 
 /* ---------------- nav rail ---------------- */
 #navrail {

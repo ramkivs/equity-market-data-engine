@@ -1,4 +1,4 @@
-/* I4 first-release UI — frontend (vanilla JS; no dependencies; no clock,
+/* EquiCore first-release UI — frontend (vanilla JS; no dependencies; no clock,
  * no randomness). All data arrives from the local serving adapter, which is
  * the single path over the authorized serving operations (Q1–Q10 via the
  * shared execute_query_definition dispatch; D38 saved queries; D39 query
@@ -392,7 +392,7 @@ function setError(el, err) {
 
 function setService(ok, err) {
   const el = $("tb-service");
-  el.textContent = ok ? ("connected · run " + (S.server ? S.server.package_run_id : "")) : ("adapter unreachable" + (err ? " — " + err.message : ""));
+  el.textContent = ok ? ("EquiCore connected · run " + (S.server ? S.server.package_run_id : "")) : ("EquiCore adapter unreachable" + (err ? " — " + err.message : ""));
   el.className = "tb-service " + (ok ? "ok" : "err");
   const sb = $("sb-state");
   sb.textContent = ok ? "state: ready" : "state: error";

@@ -73,10 +73,46 @@ class StaticAssetTests(UiHttpBase):
         self.assertEqual(status, 200)
         self.assertIn("text/html", headers.get("Content-Type"))
         text = payload.decode("utf-8")
-        # spec §4.1 exact title (TASK65 Phase 4 restored it; the former
-        # "Local Historical Data Console" text was the D1 defect)
-        self.assertIn("I4 Historical Data Engine (10-Year NSE Corpus)", text)
+        # EquiCore identity across the served application shell: browser tab
+        # title, HTML metadata, wordmark, header, sidebar, dashboard, status bar.
+        self.assertIn(
+            "<title>EquiCore — Equity Market Data Intelligence &amp; Infrastructure Engine</title>", text)
+        self.assertIn(
+            'name="description" content="EquiCore — Equity Market Data Intelligence &amp; Infrastructure Engine"', text)
+        self.assertIn('<div class="tb-mark" aria-hidden="true">EC</div>', text)
+        self.assertIn('<div class="tb-title">EquiCore</div>', text)
+        self.assertIn('class="nav-brand"', text)
+        self.assertIn("EquiCore — 10-Year NSE Historical Data", text)
+        self.assertIn("EquiCore — read-only serving view", text)
+        self.assertIn("EquiCore connecting…", text)
         self.assertIn("Data Explorer", text)
+        # No old product identity remains in any user-visible surface.
+        self.assertNotIn("I4 Historical Data Engine", text)
+        self.assertNotIn("NSE Historical Data Engine", text)
+        self.assertNotIn("Local Historical Data Console", text)
+        # NSE exchange / market-data terminology remains accurate.
+        self.assertIn("10-Year NSE Corpus", text)
+        self.assertIn("10-Year NSE Historical Data", text)
+
+    def test_favicon_identifies_equicore(self):
+        status, headers, payload = self.http("GET", "/equicore.svg")
+        self.assertEqual(status, 200)
+        self.assertIn("image/svg+xml", headers.get("Content-Type"))
+        text = payload.decode("utf-8")
+        self.assertIn('<title id="equicoreTitle">EquiCore</title>', text)
+        self.assertIn("Equity Market Data Intelligence &amp; Infrastructure Engine", text)
+        _, _, html = self.http("GET", "/")
+        self.assertIn('rel="icon" type="image/svg+xml" href="/equicore.svg"', html.decode("utf-8"))
+
+    def test_no_old_brand_in_served_styles_and_frontend(self):
+        for path in ("/app.css", "/app.js"):
+            _, _, payload = self.http("GET", path)
+            text = payload.decode("utf-8")
+            self.assertNotIn("I4 Historical Data Engine", text, path)
+            self.assertNotIn("NSE Historical Data Engine", text, path)
+        _, _, js = self.http("GET", "/app.js")
+        self.assertIn("EquiCore connected", js.decode("utf-8"))
+        self.assertIn("EquiCore adapter unreachable", js.decode("utf-8"))
 
     def test_css_and_js_served(self):
         for path in ("/app.css", "/app.js"):
@@ -91,7 +127,7 @@ class StaticAssetTests(UiHttpBase):
             self.assertEqual(status, 404, path)
 
     def test_static_table_is_the_whitelist(self):
-        self.assertEqual(set(STATIC_FILES), {"/", "/index.html", "/app.css", "/app.js"})
+        self.assertEqual(set(STATIC_FILES), {"/", "/index.html", "/app.css", "/app.js", "/equicore.svg"})
 
     def test_deterministic_headers(self):
         status, headers, _ = self.http("GET", "/api/status")
