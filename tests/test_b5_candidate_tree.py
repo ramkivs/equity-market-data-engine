@@ -5,6 +5,7 @@ import sqlite3
 import unittest
 from unittest import mock
 
+from tests.sqlite_support import sqlite_connection
 from tests import test_b5_catalog_publication as catalog_tests
 from serving.candidate_tree import CandidateTree, empty, materialize
 from serving.composite_blobs import schema
@@ -51,7 +52,7 @@ class CandidateTreePublicationTests(unittest.TestCase):
             payload.pop(name)
         payload['format'] = 'catalog-composite/11.0'
         text = _json(payload); digest = _sha(text)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('INSERT INTO composite_generations VALUES (?,?)', (digest, text))
             db.execute('UPDATE composite_active SET generation=?', (digest,))
         return digest
@@ -60,7 +61,7 @@ class CandidateTreePublicationTests(unittest.TestCase):
         self.init(); first = publish(*self.args)
         pinned = active_snapshot(self.baseline, self.args[1], self.args[2])
         records = list(pinned[0].payload['candidates'])
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT payload FROM composite_generations WHERE id=?', (first['generation'],)).fetchone()[0])
         self.assertNotIn('candidates', payload)
         self.assertEqual(payload['candidate_tree']['count'], 1)
@@ -81,14 +82,14 @@ class CandidateTreePublicationTests(unittest.TestCase):
         self.init(); result = publish(*self.args)
         selected = active_snapshot(self.baseline, self.args[1], self.args[2])
         root = selected[0].payload['candidate_tree']['root']
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('UPDATE composite_blobs SET content=? WHERE digest=?', ('broken', root))
         with self.assertRaisesRegex(QueryError, 'candidate tree invalid'):
             execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])
         self.next_delta()
         with self.assertRaisesRegex(RegistryError, 'tree node corrupt'):
             publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], result['generation'])
             self.assertEqual(db.execute('SELECT count(*) FROM staged_candidates').fetchone()[0], 2)
 
@@ -97,7 +98,7 @@ class CandidateTreePublicationTests(unittest.TestCase):
         pinned = active_snapshot(self.baseline, self.args[1], self.args[2])
         records = list(pinned[0].payload['candidates'])
         self.source.unlink(); self.next_delta()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             count = db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0]
             db.execute("CREATE TRIGGER stop_candidate_tree BEFORE UPDATE ON composite_active BEGIN SELECT RAISE(ABORT,'test'); END")
         path = type(self.baseline).path
@@ -108,7 +109,7 @@ class CandidateTreePublicationTests(unittest.TestCase):
         with mock.patch.object(type(self.baseline), 'path', blocked):
             with self.assertRaises(RegistryError):
                 publish(*self.args)
-            with sqlite3.connect(self.dbpath()) as db:
+            with sqlite_connection(self.dbpath()) as db:
                 self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], old_id)
                 self.assertEqual(db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0], count)
                 db.execute('DROP TRIGGER stop_candidate_tree')
@@ -131,21 +132,21 @@ class CandidateTreePublicationTests(unittest.TestCase):
 
     def test_v11_migration_refuses_mismatched_accepted_data(self):
         self.init(); publish(*self.args); old_id = self.to_v11()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             text = db.execute("SELECT record FROM accepted WHERE file_name='new.zip'").fetchone()[0]
             record = json.loads(text); record['rows_sha256'] = '0' * 64
             db.execute("UPDATE accepted SET record=? WHERE file_name='new.zip'", (_json(record),))
         with self.assertRaisesRegex(RegistryError, 'candidate migration accepted input mismatch'):
             publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], old_id)
 
     def test_v11_migration_refuses_corrupt_index_tree(self):
         self.init(); publish(*self.args); old_id = self.to_v11()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT payload FROM composite_generations WHERE id=?', (old_id,)).fetchone()[0])
             db.execute('UPDATE composite_blobs SET content=? WHERE digest=?', ('broken', payload['index_tree']['root']))
         with self.assertRaisesRegex(RegistryError, 'tree node corrupt'):
             publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], old_id)

@@ -7,6 +7,24 @@ import tempfile
 from .paths import RootLayoutError, resolved, validate_roots
 
 
+def sync_file(path):
+    """Flush a durable file through a **writable** descriptor.
+
+    On Windows ``os.fsync`` is the CRT ``_commit`` function, which rejects a
+    descriptor opened read-only with ``EBADF`` (``OSError: [Errno 9] Bad file
+    descriptor``). POSIX permits ``fsync`` on an ``O_RDONLY`` descriptor, so a
+    read-only flush is invisible in Linux test runs and fails on Windows.
+
+    Opening ``r+b`` performs no truncation and writes nothing; it only supplies
+    the write access ``_commit`` requires. The caller must already have closed
+    every writer of the file (the SQLite connection above), so no data is lost.
+    Directory handles are never passed here: directory fsync is POSIX-only and
+    is guarded at its call sites.
+    """
+    with open(path, "r+b") as handle:
+        os.fsync(handle.fileno())
+
+
 def atomic_write_text(path, text, sync=False):
     directory = os.path.dirname(path) or "."
     name = os.path.basename(path)

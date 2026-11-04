@@ -7,6 +7,7 @@ import sqlite3
 import unittest
 from unittest import mock
 
+from tests.sqlite_support import sqlite_connection
 from tests import test_incremental_staging as staging
 from serving.baseline import BaselineError, open_baseline
 from serving.continuity_catalog import (CatalogError, FILENAME, bootstrap, open_catalog,
@@ -52,7 +53,7 @@ class CatalogBootstrapTests(unittest.TestCase):
     def test_projection_corruption_and_index_corruption_fail_closed(self):
         self.build()
         path = os.path.join(self.args[2], FILENAME)
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             db.execute("UPDATE observations SET raw_symbol='wrong' WHERE ordinal=1")
         with self.assertRaisesRegex(CatalogError, 'observation/index mismatch'):
             verify_catalog(self.baseline, self.args[2])
@@ -62,7 +63,7 @@ class CatalogBootstrapTests(unittest.TestCase):
     def test_ticker_corruption_and_binding_mismatch_fail_closed(self):
         index, _ = self.build()
         path = os.path.join(self.args[2], FILENAME)
-        with sqlite3.connect(path) as db:
+        with sqlite_connection(path) as db:
             db.execute("UPDATE tickers SET ticker='CORRUPT' WHERE rowid=(SELECT min(rowid) FROM tickers)")
         with self.assertRaisesRegex(CatalogError, 'ticker census or digest mismatch'):
             verify_catalog(self.baseline, self.args[2])

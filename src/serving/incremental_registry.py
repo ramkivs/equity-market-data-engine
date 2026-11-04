@@ -4,6 +4,7 @@ This preparatory component never processes or publishes new inputs. A NEW result
 is a candidate, not permission to serve or a processed registry entry.
 """
 import argparse
+import contextlib
 import datetime
 import json
 import os
@@ -81,7 +82,10 @@ def initialize(baseline, registry_root, state, saved, history, source_roots):
     # Exclusive creation preserves existing and interrupted user-owned state.
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     os.close(fd)
-    with sqlite3.connect(path) as db:
+    # ``sqlite3.Connection`` as a context manager manages only the transaction;
+    # it does not close the connection. Close deterministically so an open
+    # handle cannot outlive this call and retain the registry file.
+    with contextlib.closing(sqlite3.connect(path)) as db, db:
         db.execute('PRAGMA synchronous=FULL')
         db.execute('BEGIN IMMEDIATE')
         db.execute('CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')

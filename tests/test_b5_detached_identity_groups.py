@@ -5,6 +5,7 @@ import sqlite3
 import unittest
 from unittest import mock
 
+from tests.sqlite_support import sqlite_connection
 from tests import test_b5_catalog_publication as catalog_tests
 from serving.incremental_publication import active_snapshot, publish, _sha
 from serving.incremental_registry import RegistryError, _json
@@ -43,7 +44,7 @@ class IdentityGroupTests(unittest.TestCase):
         p.pop('symbol_delta')
         p['format'] = 'catalog-composite/2.0'
         text = _json(p); old = _sha(text)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('DELETE FROM composite_generations')
             db.execute('INSERT INTO composite_generations VALUES (?,?)', (old, text))
             db.execute('UPDATE composite_active SET generation=?', (old,))
@@ -56,7 +57,7 @@ class IdentityGroupTests(unittest.TestCase):
         groups = pinned[0].payload['w2_delta']
         unaffected = 'INE000000006'
         before_ref = groups.references[unaffected]; before_rows = groups[unaffected]
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT payload FROM composite_generations WHERE id=?', (first['generation'],)).fetchone()[0])
             self.assertNotIn('w2_delta', payload)
             self.assertGreater(payload['derived_trees']['w2_delta']['count'], 0)
@@ -76,7 +77,7 @@ class IdentityGroupTests(unittest.TestCase):
         self.init(); first = publish(*self.args)
         selected = active_snapshot(self.baseline, self.args[1], self.args[2])
         digest = selected[0].payload['w2_delta'].references['INE002A01018']
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             original = db.execute('SELECT content FROM composite_blobs WHERE digest=?', (digest,)).fetchone()[0]
             db.execute('UPDATE composite_blobs SET content=? WHERE digest=?', ('broken', digest))
         with self.assertRaisesRegex(QueryError, 'blob.*digest mismatch'):
@@ -84,7 +85,7 @@ class IdentityGroupTests(unittest.TestCase):
         self.next_delta()
         with self.assertRaisesRegex(RegistryError, 'group blob.*digest mismatch'):
             publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], first['generation'])
             db.execute('UPDATE composite_blobs SET content=? WHERE digest=?', (original, digest))
         self.assertEqual(publish(*self.args)['new_inputs'], 1)
@@ -95,7 +96,7 @@ class IdentityGroupTests(unittest.TestCase):
         params = {'security_id':'INE002A01018'}
         before = execute_query_definition('Q5-association', params, self.baseline, self.args[2], composite=pinned)
         self.source.unlink()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             before_count = db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0]
             db.execute("CREATE TRIGGER stop_migration BEFORE UPDATE ON composite_active BEGIN SELECT RAISE(ABORT,'test'); END")
         original = type(self.baseline).path
@@ -106,7 +107,7 @@ class IdentityGroupTests(unittest.TestCase):
         with mock.patch.object(type(self.baseline), 'path', blocked):
             with self.assertRaises(RegistryError):
                 publish(*self.args)
-            with sqlite3.connect(self.dbpath()) as db:
+            with sqlite_connection(self.dbpath()) as db:
                 self.assertEqual(db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0], before_count)
                 self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], legacy)
                 db.execute('DROP TRIGGER stop_migration')
@@ -131,7 +132,7 @@ class IdentityGroupTests(unittest.TestCase):
 
     def test_group_reference_schema_invalid_fails_closed(self):
         self.init(); publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT g.payload FROM composite_active a JOIN composite_generations g ON g.id=a.generation').fetchone()[0])
             payload['derived_trees']['w2_delta']['count'] = -1
             text = _json(payload); digest = _sha(text)
@@ -144,7 +145,7 @@ class IdentityGroupTests(unittest.TestCase):
 
     def test_v2_migration_refuses_misidentified_projection(self):
         self.init(); publish(*self.args); legacy = self.to_v2()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT payload FROM composite_generations WHERE id=?', (legacy,)).fetchone()[0])
             group = payload['w2_delta']['INE002A01018']
             group[0][1]['source_values']['security_isin'] = 'INCORRECT'
@@ -154,6 +155,6 @@ class IdentityGroupTests(unittest.TestCase):
             count = db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0]
         with self.assertRaisesRegex(RegistryError, 'group key mismatch'):
             publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], bad)
             self.assertEqual(db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0], count)

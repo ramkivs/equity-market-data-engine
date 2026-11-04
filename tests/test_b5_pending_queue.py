@@ -4,6 +4,7 @@ import sqlite3
 import unittest
 from unittest import mock
 
+from tests.sqlite_support import sqlite_connection
 from tests import test_b5_catalog_publication as catalog_tests
 from serving.composite_binding import validate_registry
 from serving.incremental_publication import active_snapshot, publish
@@ -24,10 +25,10 @@ class PendingQueueTests(unittest.TestCase):
 
     def test_bootstrap_preserves_staging_and_scans_only_pending_after_publication(self):
         self.init()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             before = db.execute('SELECT * FROM staged_candidates').fetchall()
         publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertTrue(installed(db)); verify(db)
             self.assertEqual(db.execute('SELECT * FROM staged_candidates').fetchall(), before)
             self.assertEqual(db.execute('SELECT count(*) FROM publication_pending').fetchone()[0], 0)
@@ -36,7 +37,7 @@ class PendingQueueTests(unittest.TestCase):
             plan = ' '.join(str(r) for r in db.execute('EXPLAIN QUERY PLAN SELECT 1 FROM staged_candidates WHERE date=?', ('2025-01-01',)))
             self.assertIn('publication_staged_date', plan)
         self.source.unlink(); self.next_delta()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             verify(db)
             self.assertEqual(db.execute('SELECT count(*) FROM publication_pending').fetchone()[0], 1)
         import serving.catalog_publication as cp
@@ -51,7 +52,7 @@ class PendingQueueTests(unittest.TestCase):
         queries = [s.lower() for s in statements if 'staged_candidates' in s.lower() and s.lower().lstrip().startswith('select')]
         self.assertTrue(queries)
         self.assertTrue(all('publication_pending' in q for q in queries), queries)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             verify(db)
             self.assertEqual(db.execute('SELECT count(*) FROM publication_pending').fetchone()[0], 0)
             self.assertEqual(db.execute('SELECT count(*) FROM staged_candidates').fetchone()[0], 2)
@@ -68,7 +69,7 @@ class PendingQueueTests(unittest.TestCase):
 
     def test_interrupted_bootstrap_rolls_back_and_retries(self):
         self.init()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             with mock.patch('serving.pending_queue._digest', side_effect=RuntimeError('interrupted bootstrap')):
                 with self.assertRaisesRegex(RuntimeError, 'interrupted bootstrap'):
                     ensure(db)
@@ -81,7 +82,7 @@ class PendingQueueTests(unittest.TestCase):
 
     def test_deleted_queue_entry_fails_closed_and_explicit_recovery_preserves_records(self):
         self.init(); first = publish(*self.args); self.next_delta()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             records = db.execute('SELECT * FROM staged_candidates ORDER BY file_name').fetchall()
             db.execute('DELETE FROM publication_pending')
         with self.assertRaisesRegex(RegistryError, 'pending index digest mismatch'):
@@ -90,7 +91,7 @@ class PendingQueueTests(unittest.TestCase):
             validate_registry(self.baseline, self.args[2], self.args[1])
         result = validate_registry(self.baseline, self.args[2], self.args[1], recover_pending=True)
         self.assertEqual(result['pending_index'], 'RECOVERED')
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertEqual(db.execute('SELECT * FROM staged_candidates ORDER BY file_name').fetchall(), records)
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], first['generation'])
             verify(db)
@@ -98,21 +99,21 @@ class PendingQueueTests(unittest.TestCase):
 
     def test_staged_tamper_unseals_and_recovery_refuses_corrupt_data(self):
         self.init(); publish(*self.args); self.next_delta()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             original = db.execute("SELECT rows FROM staged_candidates WHERE file_name='later.zip'").fetchone()[0]
             db.execute("UPDATE staged_candidates SET rows='damaged' WHERE file_name='later.zip'")
         with self.assertRaisesRegex(RegistryError, 'unsealed'):
             publish(*self.args)
         with self.assertRaisesRegex(QueryError, 'digest mismatch'):
             validate_registry(self.baseline, self.args[2], self.args[1], recover_pending=True)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute("UPDATE staged_candidates SET rows=? WHERE file_name='later.zip'", (original,))
         validate_registry(self.baseline, self.args[2], self.args[1], recover_pending=True)
         self.assertEqual(publish(*self.args)['new_inputs'], 1)
 
     def test_missing_metadata_or_trigger_fails_closed_and_can_be_rebuilt(self):
         self.init(); first = publish(*self.args); self.next_delta()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute("DELETE FROM meta WHERE key='publication_pending_format'")
             db.execute('DROP TRIGGER publication_pending_stage_insert')
         with self.assertRaisesRegex(RegistryError, 'metadata missing'):
@@ -124,7 +125,7 @@ class PendingQueueTests(unittest.TestCase):
 
     def test_malformed_derived_metadata_can_be_explicitly_recovered(self):
         self.init(); first = publish(*self.args); self.next_delta()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute("UPDATE meta SET value='not-json' WHERE key='publication_pending_sha256'")
         with self.assertRaisesRegex(RegistryError, 'pending index metadata invalid'):
             publish(*self.args)
@@ -134,12 +135,12 @@ class PendingQueueTests(unittest.TestCase):
 
     def test_unknown_schema_is_never_overwritten(self):
         self.init(); publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('DROP TRIGGER publication_pending_stage_insert')
             db.execute('CREATE TRIGGER publication_pending_stage_insert AFTER INSERT ON staged_candidates BEGIN SELECT 1; END')
         with self.assertRaisesRegex(QueryError, 'unidentified pending index trigger'):
             validate_registry(self.baseline, self.args[2], self.args[1], recover_pending=True)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             sql = db.execute("SELECT sql FROM sqlite_master WHERE name='publication_pending_stage_insert'").fetchone()[0]
         self.assertIn('SELECT 1', sql)
 
@@ -148,7 +149,7 @@ class PendingQueueTests(unittest.TestCase):
         with mock.patch('serving.pending_queue.seal', side_effect=RegistryError('injected seal failure')):
             with self.assertRaisesRegex(RegistryError, 'injected seal failure'):
                 self.next_delta()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             verify(db)
             self.assertEqual(db.execute('SELECT count(*) FROM staged_candidates').fetchone()[0], 1)
             self.assertEqual(db.execute('SELECT count(*) FROM publication_pending').fetchone()[0], 0)

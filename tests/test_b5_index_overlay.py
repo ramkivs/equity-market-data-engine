@@ -5,6 +5,7 @@ import sqlite3
 import unittest
 from unittest import mock
 
+from tests.sqlite_support import sqlite_connection
 from tests import test_b5_catalog_publication as catalog_tests
 from serving.incremental_publication import active_snapshot, publish, _sha
 from serving.incremental_registry import RegistryError, _json
@@ -39,7 +40,7 @@ class IndexOverlayTests(unittest.TestCase):
         payload.pop('ticker_proofs_binding'); payload.pop('index_delta'); payload.pop('symbol_catalog')
         payload['format'] = 'catalog-composite/5.0'
         text = _json(payload); generation = _sha(text)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('DELETE FROM composite_generations')
             db.execute('INSERT INTO composite_generations VALUES (?,?)', (generation, text))
             db.execute('UPDATE composite_active SET generation=?', (generation,))
@@ -49,7 +50,7 @@ class IndexOverlayTests(unittest.TestCase):
         self.init(); first = publish(*self.args)
         old = active_snapshot(self.baseline, self.args[1], self.args[2])
         base, _ = load_index(self.args[2], self.baseline)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT payload FROM composite_generations WHERE id=?', (first['generation'],)).fetchone()[0])
         self.assertNotIn('index', payload)
         self.assertNotIn('index_delta', payload)
@@ -79,7 +80,7 @@ class IndexOverlayTests(unittest.TestCase):
         old = active_snapshot(self.baseline, self.args[1], self.args[2])
         old_index = old[1]
         self.source.unlink(); self.next_delta()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute("CREATE TRIGGER stop_index BEFORE UPDATE ON composite_active BEGIN SELECT RAISE(ABORT,'failure'); END")
         path = type(self.baseline).path
         def blocked(obj, rel):
@@ -89,7 +90,7 @@ class IndexOverlayTests(unittest.TestCase):
         with mock.patch.object(type(self.baseline), 'path', blocked):
             with self.assertRaises(RegistryError):
                 publish(*self.args)
-            with sqlite3.connect(self.dbpath()) as db:
+            with sqlite_connection(self.dbpath()) as db:
                 self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], old_id)
                 self.assertEqual(db.execute('SELECT count(*) FROM staged_candidates').fetchone()[0], 2)
                 db.execute('DROP TRIGGER stop_index')
@@ -101,7 +102,7 @@ class IndexOverlayTests(unittest.TestCase):
 
     def test_v5_migration_checks_flags_against_rows_and_retries_no_pending(self):
         self.init(); publish(*self.args); old_id = self.to_v5(); self.source.unlink()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT payload FROM composite_generations WHERE id=?', (old_id,)).fetchone()[0])
             payload['index']['flag_census']['invented'] = 1
             text = _json(payload); bad_id = _sha(text)
@@ -109,7 +110,7 @@ class IndexOverlayTests(unittest.TestCase):
             db.execute('UPDATE composite_active SET generation=?', (bad_id,))
         with self.assertRaisesRegex(RegistryError, 'index disagrees with retained incremental rows'):
             publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], bad_id)
             db.execute('UPDATE composite_active SET generation=?', (old_id,))
         result = publish(*self.args)
@@ -119,7 +120,7 @@ class IndexOverlayTests(unittest.TestCase):
 
     def test_invalid_overlay_fails_closed_on_selection_and_publication(self):
         self.init(); publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT g.payload FROM composite_active a JOIN composite_generations g ON g.id=a.generation').fetchone()[0])
             payload['index_tree']['file_count'] += 1
             text = _json(payload); bad_id = _sha(text)

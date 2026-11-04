@@ -5,6 +5,7 @@ import sqlite3
 import unittest
 from unittest import mock
 
+from tests.sqlite_support import sqlite_connection
 from tests import test_b5_catalog_publication as catalog_tests
 from serving.incremental_publication import active_snapshot, publish, _sha
 from serving.incremental_registry import RegistryError, _json
@@ -38,7 +39,7 @@ class DerivedReferenceTreesTests(unittest.TestCase):
         p.pop('delta'); p.pop('evidence')
         p['format'] = 'catalog-composite/9.0'
         text = _json(p); digest = _sha(text)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('INSERT INTO composite_generations VALUES (?,?)', (digest, text))
             db.execute('UPDATE composite_active SET generation=?', (digest,))
         return digest
@@ -50,7 +51,7 @@ class DerivedReferenceTreesTests(unittest.TestCase):
         old_ref = pinned[0].payload['w2_delta'].references[affected]
         old_rows = pinned[0].payload['w2_delta'][affected]
         unaffected_ref = pinned[0].payload['w2_delta'].references[unaffected]
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT payload FROM composite_generations WHERE id=?', (first['generation'],)).fetchone()[0])
             for name in DERIVED_NAMES:
                 self.assertNotIn(name, payload)
@@ -67,7 +68,7 @@ class DerivedReferenceTreesTests(unittest.TestCase):
 
     def test_unrelated_readers_do_not_materialize_derived_reference_trees(self):
         self.init(); first = publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT payload FROM composite_generations WHERE id=?', (first['generation'],)).fetchone()[0])
         roots = {header['root'] for header in list(payload['derived_trees'].values()) + list(payload['reference_trees'].values()) if header['root'] is not None}
         import serving.persistent_index_map as trie
@@ -130,7 +131,7 @@ class DerivedReferenceTreesTests(unittest.TestCase):
         self.init(); publish(*self.args)
         selected = active_snapshot(self.baseline, self.args[1], self.args[2])[0]
         root = selected.payload['derived_trees']['w2_delta']['root']
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             paths = {}
             for identity in ('INE002A01018', 'INE000000006'):
                 visited = set(); original = trie._read
@@ -156,7 +157,7 @@ class DerivedReferenceTreesTests(unittest.TestCase):
         identity = next(iter(current.payload['b2_delta'].references))
         self.assertIn(identity, refs)
         refs['ADDED-OTHER-IDENTITY'] = refs.pop(identity)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             text = db.execute('SELECT g.payload FROM composite_active a JOIN composite_generations g ON g.id=a.generation').fetchone()[0]
             payload = json.loads(text); root = None
             for key, value in sorted(refs.items()):
@@ -179,7 +180,7 @@ class DerivedReferenceTreesTests(unittest.TestCase):
                 self.init(); result = publish(*self.args)
                 selected = active_snapshot(self.baseline, self.args[1], self.args[2])
                 root = selected[0].payload['derived_trees'][name]['root']
-                with sqlite3.connect(self.dbpath()) as db:
+                with sqlite_connection(self.dbpath()) as db:
                     db.execute('UPDATE composite_blobs SET content=? WHERE digest=?', ('broken', root))
                 # Unrelated Q1 no longer traverses derived identity trees.
                 execute_query_definition('Q1-dataset', {}, self.baseline, self.args[2])
@@ -191,7 +192,7 @@ class DerivedReferenceTreesTests(unittest.TestCase):
                 self.next_delta()
                 with self.assertRaisesRegex(RegistryError, 'tree node corrupt'):
                     publish(*self.args)
-                with sqlite3.connect(self.dbpath()) as db:
+                with sqlite_connection(self.dbpath()) as db:
                     self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], result['generation'])
 
     def test_v9_migration_with_pending_rollback_and_pinned_reader(self):
@@ -200,7 +201,7 @@ class DerivedReferenceTreesTests(unittest.TestCase):
         identity = 'INE002A01018'
         old_rows = pinned[0].payload['w2_delta'][identity]
         self.source.unlink(); self.next_delta()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             count = db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0]
             db.execute("CREATE TRIGGER stop_migration BEFORE UPDATE ON composite_active BEGIN SELECT RAISE(ABORT,'test'); END")
         path = type(self.baseline).path
@@ -211,7 +212,7 @@ class DerivedReferenceTreesTests(unittest.TestCase):
         with mock.patch.object(type(self.baseline), 'path', blocked):
             with self.assertRaises(RegistryError):
                 publish(*self.args)
-            with sqlite3.connect(self.dbpath()) as db:
+            with sqlite_connection(self.dbpath()) as db:
                 self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], old_id)
                 self.assertEqual(db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0], count)
                 db.execute('DROP TRIGGER stop_migration')

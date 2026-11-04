@@ -6,6 +6,7 @@ import sqlite3
 import unittest
 from unittest import mock
 
+from tests.sqlite_support import sqlite_connection
 from tests import test_b5_catalog_publication as catalog_tests
 from serving.composite_blobs import schema
 from serving.incremental_publication import active_snapshot, publish, _sha
@@ -73,7 +74,7 @@ class TickerTreePublicationTests(unittest.TestCase):
             payload.pop(name)
         payload['format'] = 'catalog-composite/10.0'
         text = _json(payload); old = _sha(text)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             db.execute('INSERT INTO composite_generations VALUES (?,?)', (old, text))
             db.execute('UPDATE composite_active SET generation=?', (old,))
         return old
@@ -94,7 +95,7 @@ class TickerTreePublicationTests(unittest.TestCase):
             q4 = execute_query_definition('Q4-filter', {'filters': {'symbol':'NEWRELIANCE'}}, self.baseline, self.args[2])
             q5 = execute_query_definition('Q5-association', {'symbol':'NEWRELIANCE','series':'EQ'}, self.baseline, self.args[2])
         self.assertGreater(q3['result_count'], 0); self.assertGreater(q4['result_count'], 0); self.assertGreater(q5['record_count'], 0)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             p = json.loads(db.execute('SELECT payload FROM composite_generations WHERE id=?', (second['generation'],)).fetchone()[0])
         self.assertNotIn('symbol_delta', p)
         self.assertEqual(set(p['ticker_trees']), {'tickers', 'identities', 'series'})
@@ -108,7 +109,7 @@ class TickerTreePublicationTests(unittest.TestCase):
                 self.init(); old = publish(*self.args)
                 selected = active_snapshot(self.baseline, self.args[1], self.args[2])
                 root = selected[0].payload['ticker_trees'][kind]['root']
-                with sqlite3.connect(self.dbpath()) as db:
+                with sqlite_connection(self.dbpath()) as db:
                     db.execute('UPDATE composite_blobs SET content=? WHERE digest=?', ('broken', root))
                 with self.assertRaisesRegex(QueryError, 'ticker'):
                     execute_query_definition('Q3-instrument', {'symbol':'RELIANCE','series':'EQ'}, self.baseline, self.args[2])
@@ -117,13 +118,13 @@ class TickerTreePublicationTests(unittest.TestCase):
                 self.next_delta()
                 with self.assertRaises(RegistryError):
                     publish(*self.args)
-                with sqlite3.connect(self.dbpath()) as db:
+                with sqlite_connection(self.dbpath()) as db:
                     self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], old['generation'])
 
     def test_explicit_binding_checks_ticker_trees_against_retained_rows(self):
         from serving.composite_binding import ensure_registry_binding
         self.init(); publish(*self.args)
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             payload = json.loads(db.execute('SELECT g.payload FROM composite_active a JOIN composite_generations g ON g.id=a.generation').fetchone()[0])
             payload['ticker_trees'] = empty()
             text = _json(payload); digest = _sha(text)
@@ -137,7 +138,7 @@ class TickerTreePublicationTests(unittest.TestCase):
         pinned = active_snapshot(self.baseline, self.args[1], self.args[2])
         old_census = list(pinned[0].payload['symbol_delta']['observations'])
         self.source.unlink(); self.next_delta()
-        with sqlite3.connect(self.dbpath()) as db:
+        with sqlite_connection(self.dbpath()) as db:
             count = db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0]
             db.execute("CREATE TRIGGER stop_ticker_tree BEFORE UPDATE ON composite_active BEGIN SELECT RAISE(ABORT,'test'); END")
         path = type(self.baseline).path
@@ -148,7 +149,7 @@ class TickerTreePublicationTests(unittest.TestCase):
         with mock.patch.object(type(self.baseline), 'path', blocked):
             with self.assertRaises(RegistryError):
                 publish(*self.args)
-            with sqlite3.connect(self.dbpath()) as db:
+            with sqlite_connection(self.dbpath()) as db:
                 self.assertEqual(db.execute('SELECT generation FROM composite_active').fetchone()[0], old_id)
                 self.assertEqual(db.execute('SELECT count(*) FROM composite_blobs').fetchone()[0], count)
                 db.execute('DROP TRIGGER stop_ticker_tree')
