@@ -15,7 +15,7 @@ from serving.archive import D01InventoryError, load_d01_inventory
 from serving.baseline import open_baseline
 from serving.history import load_history, record_execution
 from serving.index import build_index, load_index, write_index, ServingIndexError
-from serving.paths import RootLayoutError, validate_roots
+from serving.paths import RootLayoutError, resolved, validate_roots
 from serving.rebuild import rebuild_state
 from serving.saved import create_saved, load_saved, execute_saved
 from ui.api import UiApi
@@ -136,7 +136,16 @@ class StateSafetyTests(unittest.TestCase):
         with patch('serving.saved.load_d01_inventory', return_value={}) as inv, \
              patch('serving.saved.query_archive_inventory', return_value={'ok': True}):
             self.assertEqual(api.query({'mode': 'Q9-archive-inventory', 'params': {}})['query'], {'ok': True})
-            inv.assert_called_once_with(repo_root=str(REPO))
+            inv.assert_called_once()
+            # UiApi anchors its repository context with repository_root() ->
+            # resolved(), i.e. the canonical case-insensitive Windows identity.
+            # On Windows normcase lowercases the spelling; identity, not spelling,
+            # is the contract (B1_STATE_SAFETY_EXECUTION.md). The CLI above still
+            # propagates the caller's spelling byte-for-byte.
+            ui_repo_root = inv.call_args.kwargs['repo_root']
+            self.assertIsNotNone(ui_repo_root)
+            self.assertEqual(resolved(ui_repo_root), resolved(str(REPO)))
+            self.assertNotEqual(resolved(ui_repo_root), resolved(str(self.root)))
 
     def test_external_cwd_cli_inventory_and_qualification(self):
         env = dict(os.environ, PYTHONPATH=str(REPO / 'src'), PYTHONDONTWRITEBYTECODE='1')

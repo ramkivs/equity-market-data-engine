@@ -195,7 +195,8 @@ full `python -B -m unittest discover -s tests -t .` be considered.
 
 1. Actual Windows + Python 3.14.3 execution has not been performed here; no
    Windows filesystem, no Python 3.14.3 binary in Arena. Windows compatibility
-   remains unverified until §7 is run.
+   remains unverified until §7 is run. (The owner later ran targeted Windows
+   modules; see §9. The complete Windows suite is still outstanding.)
 2. The recorded Windows run was interrupted after 147.34 s. Categories outside
    B5 in the remaining, unobserved tests have not been attributed; the fd
    harness found no open handles at cleanup in the non-B5 modules, but a real
@@ -204,3 +205,59 @@ full `python -B -m unittest discover -s tests -t .` be considered.
    evidence of that in the recorded run, and no change was made (scope).
 4. There is still no official Python-version/OS support matrix; declaring one is
    an owner decision, not an inference from this correction.
+
+## 9. Windows path-casing contract (targeted Windows verification, later run)
+
+Two failures remained after the PR #3 corrections were exercised on actual
+Windows / Python 3.14.3:
+
+| Module / test | Expected | Actual |
+|---|---|---|
+| `tests.test_b1_state_safety::test_q9_cli_and_ui_propagate_explicit_repository` | `H:\EquiCore\equity-market-data-engine` | `h:\equicore\equity-market-data-engine` |
+| `tests.test_b5_registry_binding::test_missing_binding_is_detected_and_explicit_repair_preserves_data` | registry spelling retained | lowercase registry path |
+
+**Contract.** Path identity in the serving layer is canonical and
+case-insensitive on Windows: `serving.paths.resolved()` is
+`normcase(realpath(abspath(path)))`. `docs/implementation/B1_STATE_SAFETY_EXECUTION.md`
+records that the implementation deliberately uses the platform's `realpath`,
+`normcase` and `commonpath`, and that Windows case behaviour was left for
+Windows verification. Windows `normcase` lowercases the whole path; POSIX
+`normcase` is the identity. Every root overlap/alias/replacement check and the
+digest-protected `composite_registry.json` binding use that canonical form:
+`ensure_binding()` persists `resolved(registry_root)` and `_read_file()` rejects
+a stored value whose `resolved()` differs from itself. Caller spelling is not
+identity and is not persisted.
+
+**Root cause.** Both values come from deliberate uses of `resolved()`:
+
+* `src/ui/api.py::UiApi.__init__` sets `self._repo_root = repository_root(repo_root)`;
+  `repository_root()` resolves through `normcase` and therefore lowercases on
+  Windows. The CLI passes `args.repo` spelling unchanged (`cmd_inventory`), and
+  `serving.archive.load_d01_inventory` canonicalizes again at the point of file
+  access — so both paths identify the same directory.
+* `src/serving/composite_binding.py::ensure_binding` persists
+  `resolved(registry_root)`; `read_binding()` returns that canonical value.
+
+Neither is an implementation defect. The failures are **overly strict test
+expectations** that compared raw spelling to canonical identity; Linux passed
+only because POSIX `normcase` is the identity. Persisting raw spelling would
+make the binding digest depend on case variants and would relax the fail-closed
+canonicality check, so the binding format and the safety checks were left
+untouched.
+
+**Correction (tests only).** `tests/test_b1_state_safety.py` now asserts the
+UiApi-propagated `repo_root` by `resolved()` identity (and that it is not the
+fixture root); the strict CLI spelling assertion is unchanged.
+`tests/test_b5_registry_binding.py` now asserts `read_binding(...) ==
+resolved(self.args[1])` **and** that the stored value is already canonical. New
+`tests/test_windows_path_casing.py` emulates Windows `normcase` on POSIX and
+covers canonical identity, case-variant CLI/UI propagation, canonical binding,
+refusal of a genuinely different registry, and rejection of a binding that
+stores raw spelling with a correct digest. No production module, pinned hash,
+fingerprint, inventory manifest or evidence fixture was changed.
+
+**Verified on Linux only** (`PYTHONPATH=src`, Python 3.11.2): the two affected
+modules plus the new module, 19 tests, OK; full suite unchanged. These Linux
+results plus `normcase` emulation do **not** establish Windows results. The
+complete Windows suite is still outstanding; no gate is advanced and B5/B7 are
+not promoted.

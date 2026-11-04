@@ -13,6 +13,7 @@ from tests.sqlite_support import sqlite_connection
 from tests import test_b5_catalog_publication as catalog_tests
 from serving.composite_binding import ensure_registry_binding, read_binding
 from serving.incremental_publication import publish
+from serving.paths import resolved
 from serving.query import QueryError
 from serving.saved import execute_query_definition
 
@@ -49,7 +50,13 @@ class RegistryBindingTests(unittest.TestCase):
         self.assertEqual(facts['accepted_incremental'], 1)
         self.assertEqual(facts['staged'], 2)
         self.assertEqual(self.snapshot_registry(), before)
-        self.assertEqual(read_binding(self.baseline, self.args[2]), self.args[1])
+        # The binding persists the canonical resolved() identity, not the
+        # caller's spelling. Windows normcase lowercases it; POSIX normcase is
+        # the identity. Assert both the identity and that the stored value is
+        # already canonical (the fail-closed _read_file invariant).
+        bound = read_binding(self.baseline, self.args[2])
+        self.assertEqual(bound, resolved(self.args[1]))
+        self.assertEqual(resolved(bound), bound)
         self.assertEqual(publish(*self.args)['new_inputs'], 1)
 
     def test_guard_rejects_wrong_registry_and_corruption(self):
