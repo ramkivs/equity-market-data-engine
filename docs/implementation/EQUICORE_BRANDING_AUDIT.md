@@ -90,15 +90,40 @@ no adapter interaction, and is covered by
 `version_string()` still returns `i4-ui`, `/api/status` still reports
 `i4-ui-serving-adapter/1.0`, and all pre-existing static paths are unchanged.
 
-## 5. Repository rename
+## 5. Repository rename — target, not yet executed
 
-`ramkivs/nse-historical-data-engine` → `ramkivs/equity-market-data-engine`
-(in-place GitHub rename, no replacement repository, no history migration).
-Live references updated: `README.md` and the local `origin` remote
-(`git remote set-url`). Historical records keep the recorded old URL verbatim;
-GitHub's rename redirect keeps those links resolvable. PR history, branches,
-tags, commits, releases, issues and repository contents are preserved by the
-in-place rename.
+Target: `ramkivs/nse-historical-data-engine` →
+`ramkivs/equity-market-data-engine`, as an in-place GitHub rename (no
+replacement repository, no history migration). `README.md` already carries the
+target URL.
+
+**The rename has not been performed.** `gh repo rename`, the REST
+`PATCH /repos/{owner}/{repo}` endpoint and the GraphQL `updateRepository`
+mutation all return HTTP 403 `Resource not accessible by integration`, with
+response header `X-Accepted-Github-Permissions: administration=write`. The
+Arena GitHub App installation token reports `admin: true` on the repository but
+the installation itself lacks the "Administration: write" permission required
+for repository settings changes. The credential used by `git` is the same
+token, so no alternative path exists in this environment.
+
+The local `origin` URL therefore deliberately remains the working old URL
+(`https://github.com/ramkivs/nse-historical-data-engine.git`); pointing it at
+the target URL before the rename would make every fetch and push fail (the
+target URL currently returns "Repository not found"). The target name does not
+exist as a separate repository (API 404) — no replacement repository was
+created.
+
+Once the GitHub connection is reconnected with administration permission (or
+the owner performs the rename in GitHub Settings), the two remaining steps are:
+
+```
+gh repo rename equity-market-data-engine --repo ramkivs/nse-historical-data-engine --yes
+git remote set-url origin https://github.com/ramkivs/equity-market-data-engine.git
+```
+
+Historical records keep the recorded old URL verbatim; GitHub's rename redirect
+keeps those links resolvable. An in-place rename preserves PR history,
+branches, tags, commits, releases, issues and repository contents.
 
 ## 6. Validation (Linux, Python 3.11.2, Node v22.22.3 already installed)
 
