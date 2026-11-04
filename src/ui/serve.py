@@ -64,11 +64,13 @@ STATIC_FILES = {
     "/index.html": "index.html",
     "/app.css": "app.css",
     "/app.js": "app.js",
+    "/equicore.svg": "equicore.svg",
 }
 STATIC_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
+    ".svg": "image/svg+xml",
 }
 
 

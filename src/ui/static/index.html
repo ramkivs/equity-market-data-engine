@@ -3,26 +3,29 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>I4 Historical Data Engine (10-Year NSE Corpus)</title>
+<title>EquiCore — Equity Market Data Intelligence &amp; Infrastructure Engine</title>
+<meta name="description" content="EquiCore — Equity Market Data Intelligence &amp; Infrastructure Engine">
+<link rel="icon" type="image/svg+xml" href="/equicore.svg">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
 <div id="app">
   <!-- ======================= title bar ======================= -->
   <header id="titlebar" role="banner">
-    <div class="tb-mark" aria-hidden="true">I4</div>
+    <div class="tb-mark" aria-hidden="true">EC</div>
     <div class="tb-titles">
-      <div class="tb-title">I4 Historical Data Engine (10-Year NSE Corpus)</div>
-      <div class="tb-subtitle">I4 Historical Data Engine — 10-Year NSE Corpus — read-only serving view</div>
+      <div class="tb-title">EquiCore</div>
+      <div class="tb-subtitle">Equity Market Data Intelligence &amp; Infrastructure Engine — 10-Year NSE Corpus — read-only serving view</div>
     </div>
     <div class="tb-right">
-      <span id="tb-service" class="tb-service" title="Service state (from the local serving adapter)">connecting…</span>
+      <span id="tb-service" class="tb-service" title="EquiCore service state (from the local serving adapter)">EquiCore connecting…</span>
     </div>
   </header>
 
   <div id="frame">
     <!-- ======================= navigation rail ======================= -->
-    <nav id="navrail" role="navigation" aria-label="Primary">
+    <nav id="navrail" role="navigation" aria-label="EquiCore primary navigation">
+      <div class="nav-brand" title="EquiCore — Equity Market Data Intelligence &amp; Infrastructure Engine">EquiCore</div>
       <div class="nav-group">
         <button class="nav-item" data-page="dashboard" aria-current="page">
           <span class="nav-ico" aria-hidden="true">&#9632;</span><span class="nav-label">Dashboard</span>
@@ -58,8 +61,8 @@
       <section id="page-dashboard" class="page" aria-label="Dashboard">
         <div class="page-head">
           <div>
-            <h1 class="page-title">10-Year NSE Historical Data</h1>
-            <div class="page-sub" id="dash-sub">Read-only view over the qualified package — dashboard and Data Explorer surfaces of the first release.</div>
+            <h1 class="page-title">EquiCore — 10-Year NSE Historical Data</h1>
+            <div class="page-sub" id="dash-sub">Read-only EquiCore serving view over the qualified package — dashboard and Data Explorer surfaces of the first release.</div>
           </div>
           <div id="dash-run" class="run-summary" aria-label="Run summary"></div>
         </div>
@@ -113,7 +116,7 @@
         <div class="page-head">
           <div>
             <h1 class="page-title">Data Explorer</h1>
-            <div class="page-sub" id="expl-sub">Contract-driven queries (Q1–Q10), record detail, provenance, and quality over the served package.</div>
+            <div class="page-sub" id="expl-sub">EquiCore contract-driven queries (Q1–Q10), record detail, provenance, and quality over the served package.</div>
           </div>
           <div id="expl-dataset" class="run-summary" aria-label="Dataset summary"></div>
         </div>
@@ -288,7 +291,7 @@
     <span id="sb-archives" class="sb-item">archives: …</span>
     <span id="sb-rows" class="sb-item">rows: …</span>
     <span class="sb-flex"></span>
-    <span class="sb-item muted">read-only serving view — no live data, no processing</span>
+    <span class="sb-item muted">EquiCore — read-only serving view — no live data, no processing</span>
   </footer>
 </div>
 <script src="/app.js"></script>

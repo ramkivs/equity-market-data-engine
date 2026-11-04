@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="equicoreTitle">
+  <title id="equicoreTitle">EquiCore</title>
+  <desc>EquiCore — Equity Market Data Intelligence &amp; Infrastructure Engine</desc>
+  <rect width="64" height="64" rx="10" fill="#0B1329"/>
+  <rect x="3" y="3" width="58" height="58" rx="8" fill="none" stroke="#3B82F6" stroke-width="2"/>
+  <text x="32" y="42" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="700" fill="#F2F6FC">EC</text>
+</svg>
