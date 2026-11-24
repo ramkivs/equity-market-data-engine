@@ -1,0 +1,1 @@
+{"built":true,"counts":{"isins":7632,"keys":5689948,"rows_indexed":5689948,"rows_scanned":5689949},"digest":"8095982136ed4ba0f9c0b3577ff145245ac3e83d39e80b381ac955f8f86ad398"}

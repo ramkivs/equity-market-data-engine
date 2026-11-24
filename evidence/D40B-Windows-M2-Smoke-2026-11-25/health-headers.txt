@@ -1,0 +1,9 @@
+HTTP/1.1 200 OK
+Server: BaseHTTP/0.6 Python/3.14.3
+Date: Tue, 24 Nov 2026 15:51:45 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 660
+Cache-Control: no-store
+X-Content-Type-Options: nosniff
+X-Response-Digest: 12dfbeefc2b777d2e481f15e872cb80f770a6e0256f50e1864d2f64105515711
+

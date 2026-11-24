@@ -1,0 +1,120 @@
+{
+  "changed": {
+    "findings": [],
+    "note": "D21 CHANGED findings require the class-(3) registry, which does not exist in the M2-only release (D21; D22 º6); they are explicitly absent and never fabricated",
+    "present": false,
+    "status": "absent-in-m2-only-release"
+  },
+  "flag_census": {
+    "isin_invalid_length": 1,
+    "orphan_no_base_row": 336,
+    "overlay_qty_gt_base": 1060
+  },
+  "quarantine": {
+    "count": 0
+  },
+  "query": "Q8-data-quality",
+  "reconciliation": {
+    "by_result": {
+      "divergence": 530,
+      "match": 36950,
+      "not-comparable": 1920,
+      "observed": 2
+    },
+    "by_tier": {
+      "A": 14772,
+      "C": 14779,
+      "E": 2464,
+      "G": 7387
+    },
+    "record_count": 39402
+  },
+  "unresolved": {
+    "present": true,
+    "record_count": 11,
+    "records": [
+      {
+        "dependency_id": "D07-OPEN-1",
+        "kind": "governance-dependency",
+        "label": "T0 volume-inclusion semantics",
+        "row_count": 237,
+        "state": "unresolved (carried; never resolved by the runner)"
+      },
+      {
+        "dependency_id": "D07-OPEN-2",
+        "kind": "governance-dependency",
+        "label": "IT series definition/semantics",
+        "row_count": 333,
+        "state": "unresolved (carried; never resolved by the runner)"
+      },
+      {
+        "dependency_id": "D07-OPEN-3",
+        "kind": "governance-dependency",
+        "label": "SF code",
+        "row_count": 5,
+        "state": "unresolved (carried; never resolved by the runner)"
+      },
+      {
+        "dependency_id": "D07-OPEN-4",
+        "kind": "governance-dependency",
+        "label": "BE rights-entitlement vs T2T row-level split",
+        "row_count": 428831,
+        "state": "unresolved (carried; never resolved by the runner)"
+      },
+      {
+        "dependency_id": "D07-OPEN-7",
+        "kind": "governance-dependency",
+        "label": "FinInstrmId namespace semantics",
+        "row_count": 1700650,
+        "state": "unresolved (carried; never resolved by the runner)"
+      },
+      {
+        "counts": {
+          "not-applicable": 2461,
+          "not-retrieved": 115,
+          "official-holiday": 30,
+          "unexplained-by-obtained-circulars": 3
+        },
+        "kind": "calendar-label-status-counts",
+        "state": "legacy-era gaps are not retrieved and their causes are never invented",
+        "unresolved_dependency": "D07-OPEN-8"
+      },
+      {
+        "dependency_id": "D07-OPEN-8",
+        "kind": "calendar-unresolved-date",
+        "label_status": "unexplained-by-obtained-circulars",
+        "official_holiday_label": null,
+        "state": "cause not assigned (D05 º3.4; D07-OPEN-8)",
+        "trade_date": "2024-11-20"
+      },
+      {
+        "dependency_id": "D07-OPEN-8",
+        "kind": "calendar-unresolved-date",
+        "label_status": "unexplained-by-obtained-circulars",
+        "official_holiday_label": null,
+        "state": "cause not assigned (D05 º3.4; D07-OPEN-8)",
+        "trade_date": "2025-10-20"
+      },
+      {
+        "dependency_id": "D07-OPEN-8",
+        "kind": "calendar-unresolved-date",
+        "label_status": "unexplained-by-obtained-circulars",
+        "official_holiday_label": null,
+        "state": "cause not assigned (D05 º3.4; D07-OPEN-8)",
+        "trade_date": "2026-01-15"
+      },
+      {
+        "identities": 7626,
+        "kind": "identity-non-promotion",
+        "note": "security_id in this model is the D05 º6.1 adopted correlation key (normalized ISIN). It is NOT promoted to exchange-authoritative identity (D05 º3.2 non-assumption); continuity across the legacy/UDiFF boundary is OPEN (D05 º3.2, D07 º9 item 6); master-snapshot and ETF-register associations are DEC-1-deferred (D07 º9, º13-C).",
+        "state": "correlation key is not promoted to exchange-authoritative identity"
+      },
+      {
+        "first_date": "2016-09-20",
+        "kind": "cross-era-boundary-residual",
+        "last_date": "2026-09-18",
+        "note": "cross-era continuity policy is UNINTERPRETED (D08 º18); the run makes no continuity claim and resolves no residual"
+      }
+    ]
+  }
+}

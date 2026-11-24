@@ -1,0 +1,2 @@
+validity_counts {"BLANK": 0, "INVALID_CHARSET": 0, "INVALID_CHECKDIGIT": 0, "INVALID_LEN": 1, "INVALID_PREFIX": 0, "VALID": 5689948}
+total_flag_entries 1397

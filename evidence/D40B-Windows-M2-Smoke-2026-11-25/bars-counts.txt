@@ -1,0 +1,8 @@
+API HTTP status: 200
+API total: 1
+API returnedBarCount: 1
+Package rows: 1
+Symbol: ABFRLPP1
+Series: E1
+Date range: 2016-09-20 through 2021-02-16
+Result: COUNT PARITY

@@ -1,0 +1,10 @@
+HTTP/1.1 403 Forbidden
+Server: BaseHTTP/0.6 Python/3.14.3
+Date: Tue, 24 Nov 2026 15:51:41 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 226
+Cache-Control: no-store
+X-Content-Type-Options: nosniff
+X-Response-Digest: 65e42f469191f021fe5791872a5dcc5cce8e6c2481058f35678c2dc5c493ec93
+
+{"contract":"iips-equicore-historical/v1","error":{"code":"HOST_FORBIDDEN","message":"Host must be a loopback address (127.0.0.1/localhost)"},"responseDigest":"65e42f469191f021fe5791872a5dcc5cce8e6c2481058f35678c2dc5c493ec93"}

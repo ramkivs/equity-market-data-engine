@@ -1,0 +1,12 @@
+serving iips-equicore-historical/v1 on http://127.0.0.1:8614 (package i4-20261008-M2, manifest e7c7e4c8à, pid 21800)
+iips_serve "GET /v1/health HTTP/1.1" 401 -
+iips_serve "GET /v1/health HTTP/1.1" 401 -
+iips_serve "GET /v1/health HTTP/1.1" 403 -
+iips_serve "GET /v1/health HTTP/1.1" 200 -
+iips_serve "POST /v1/historical/bars HTTP/1.1" 200 -
+iips_serve "POST /v1/historical/bars HTTP/1.1" 200 -
+iips_serve "POST /v1/historical/bars HTTP/1.1" 200 -
+iips_serve "POST /v1/historical/bars HTTP/1.1" 200 -
+iips_serve "POST /v1/historical/eod-observation HTTP/1.1" 200 -
+iips_serve "GET /v1/calendar?from=2024-11-15&to=2024-11-30 HTTP/1.1" 200 -
+iips_serve "POST /v1/historical/bars HTTP/1.1" 200 -

@@ -1,0 +1,3 @@
+total: 1
+rows_on_date: 1
+{"isin_normalized": "DUMMY", "isin_validity": "INVALID_LEN", "flags": [{"detail": "ISIN 'DUMMY' length 5 != 12 after trim (informational; row retained)", "name": "isin_invalid_length", "reference": "D05 º5", "severity": "informational"}], "raw_line_present": false}

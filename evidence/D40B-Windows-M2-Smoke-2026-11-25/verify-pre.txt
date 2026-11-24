@@ -1,0 +1,18 @@
+{
+  "checks_passed": [
+    "verify-01",
+    "verify-02",
+    "verify-03",
+    "verify-04",
+    "verify-05",
+    "verify-06",
+    "verify-07"
+  ],
+  "manifest_entries": 4946,
+  "manifest_sha256": "e7c7e4c8271f3a1c8ef42d76b926fe048a8997a342c92d89819eecd79e73b9dc",
+  "pinned": "m2",
+  "result": "pass",
+  "run_id": "i4-20261008-M2",
+  "total_bytes": 21119807344,
+  "verification": "full"
+}

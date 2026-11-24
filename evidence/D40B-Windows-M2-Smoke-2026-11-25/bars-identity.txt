@@ -1,0 +1,1 @@
+bars bodies byte-identical — fc.exe /b: no differences encountered
