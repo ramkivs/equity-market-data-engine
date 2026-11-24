@@ -1,7 +1,8 @@
 # D40 ↔ D05 §5 / EC-DEC-02 — ISIN Index Eligibility: Evidence-Based Assessment & Proposed Owner Clarification
 
 **Date:** 2026-11-24
-**Type:** Decision-input / technical-governance assessment. **This record grants no authority.** It is prepared for the sole owner's approval; the proposed clarification (§6) takes effect only if the owner approves it, by publication as a D40 addendum or a successor decision record (proposed: D41).
+**Disposition (2026-11-24):** **APPROVED by the owner.** C-1 was approved 2026-11-24 and is published as **Addendum C-1 §5 of the D40 record** (`docs/architecture/D40_IIPS_EQUICORE_SERVING_EXTENSION_AUTHORITY_DECISION.md`), including the A1–A10 binding Phase B acceptance framework (A1 and A4 refined at owner direction). ASI-1 is retained unchanged as the evidence basis; it grants no authority beyond what D40 Addendum C-1 records. The publication occurred in Arena PR #7 (merged to `main`).
+**Type:** Decision-input / technical-governance assessment. **This record grants no authority.** The proposed clarification (§6) was approved by the owner on 2026-11-24 and published as the D40 addendum (see disposition above).
 **Task:** Resolve the relationship between D05 §5 (ISIN validity flags informational, non-gating) and D40 EC-DEC-02 (Class-(4) `(isin_normalized, series, business_date)` index over `VALID` ISIN rows only).
 **Repository:** `ramkivs/equity-market-data-engine`; branch `arena/ddcaa938-equity-market-data-engine`; baseline `origin/main` = `d0a329f` (PR #6 merged, D40 published).
 **No code, tests, data, or engine artifacts were changed by this assessment.**
@@ -149,6 +150,6 @@
 
 ## 9. Disposition & remaining steps
 
-- **Interpretation:** EC-DEC-02 is index-membership-scoped; D05 §5 stands verbatim; no D05 amendment.
-- **Action required:** owner approves/edits C-1 (§6) and choice of publication mechanics (addendum vs D41), and signs off on A1–A10.
-- Until then: **no Phase B ISIN-index work may treat any row as unavailable**; any implementation returning fewer canonical rows than the package contains, by any path, is a defect against both D05 §5 and this assessment.
+- **Interpretation:** EC-DEC-02 is index-membership-scoped; D05 §5 stands verbatim; no D05 amendment (confirmed by owner, 2026-11-24).
+- **Adopted:** owner approved C-1 and the A1–A10 framework (with A1/A4 refinements) on 2026-11-24; published as D40 §5 (Addendum C-1) in PR #7 (merged to `main`). See the addendum for the binding text and the Phase B A1–A10 framework.
+- Until Phase B executes under separate implementation authorization: **no Phase B ISIN-index work may treat any row as unavailable**; any implementation returning fewer canonical rows than the package contains, by any path, is a defect against both D05 §5 and D40 Addendum C-1.
