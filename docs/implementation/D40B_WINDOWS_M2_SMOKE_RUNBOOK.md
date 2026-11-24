@@ -5,8 +5,7 @@ physical, I5-qualified package `i4-20261008-M2` on the Windows custody host, and
 evidence Arena needs to update the acceptance matrix in the Phase B implementation record.
 
 **Status of this document.** Prepared 2026-11-24 (PR #8). Nothing in this runbook proves anything by
-itself; acceptance requires the owner to execute it and supply the captured outputs. Until then:
-**A9 and the M2 legs of A2/A5/A7/EC-AC-05 = `PENDING OWNER WINDOWS VERIFICATION`.**
+itself; acceptance requires the owner to execute it and supply the captured outputs. **Executed and returned by the owner 2026-11-24; evidence published as commit `0127134` on branch `evidence/d40b-windows-m2-smoke-2026-11-25` and verified in the implementation record §4B (2026-11-25).** A1–A8/A10 and the M2 legs of EC-AC are evidenced there. **A9 is NOT attested as worded** — the owner-executed census found zero `INVALID_CHECKDIGIT` rows in the qualified M2 (`verdict-counts.txt`; W1-DIV-1); the single `INVALID_LEN` specimen was served verbatim with `isin_invalid_length` through the API. A9's disposition is reserved to Ramki. Final acceptance remains with the owner (Ramki).
 
 **Honesty and custody rules.**
 
@@ -355,5 +354,4 @@ row payloads):
 6. `eod-observation.json`, `bars-headers-2.txt`, `calendar-window.json`, digest-recompute output
 7. `SHA256SUMS.txt`
 
-Acceptance is declared only after Arena verifies these against A1–A10 / EC-AC-01..05 and the owner
-merges/accepts the updated record on PR #8. Until then: **PENDING OWNER WINDOWS VERIFICATION.**
+The evidence bundle was returned and verified 2026-11-25 (record §4B): SHA256SUMS.txt 33/33 OK; A1–A8/A10 + EC-AC M2 legs recorded with file-level references. Acceptance is **not** declared by this verification: A9 is unmet as worded (W1-DIV-1) and final acceptance/A9 disposition are reserved to the owner (Ramki).
