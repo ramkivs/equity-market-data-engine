@@ -168,6 +168,19 @@ or historical-record changes. `git diff --stat` at commit time is the binding fi
 
 ## 8. Remaining defects / blockers / honesty notes
 
+0. **A9 specimen premise superseded by W1-DIV-1 (corrected runbook, 2026-11-24).** The D05 §5
+   parenthetical (215,393 Legacy INVALID_CHECKDIGIT, ~5.4%) is a D03-tool census of a non-governed
+   Luhn variant (`tools/d03_fixture_scan/d03_fixtures.py:82-118`, `v[1:11]` parity bug, selftest
+   round-trip). W1 (M2's engine) implements the governed ISO 6166 check and finds ZERO invalid check
+   digits on the published sample (`src/nse_engine/contract.py` W1-DIV-1). Consequently the canonical
+   M2 very likely contains **zero** INVALID_CHECKDIGIT rows — consistent with the owner's 2026-11-24
+   Windows searches returning zero matches across `legacy13`. The runbook's Step 7 was corrected
+   (verdict_census whole-package sweep + Q8 `serving quality` + specimen discovery for whichever
+   flagged population exists, expected: the single INVALID_LEN row). A9 as originally worded
+   ("at least one Legacy instrument known to carry an invalid check digit") is expected NOT to be
+   satisfiable on the qualified M2; if the verdict census confirms zero, A9 must be recorded as
+   unmet-on-qualified-package (or re-worded by owner decision) — never reported as passed, and no
+   package/serving change may be made to manufacture a specimen.
 1. **A9 (Windows M2 smoke) not executed; M2-level A2/A5/A7/EC-AC-05 legs unexecuted.** Blocked by
    absence of the physical package in this environment (bounded search; §4). No claim is made that
    they pass. The owner must run §4 and record outputs; until then Phase B acceptance is **not

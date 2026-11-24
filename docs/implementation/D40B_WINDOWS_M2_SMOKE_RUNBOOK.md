@@ -142,33 +142,101 @@ curl.exe -s -D .\health-headers.txt -o .\health-ok.json -w "HTTP %{http_code}`n"
   `"state": { "serving_index": …, "isin_index": … }`, and `"auth": "bearer"`.
 - **Failure interpretation:** any other status → record verbatim; EC-AC-01 fails.
 
-## 7. TCS historical observation retrieval — Legacy specimen incl. INVALID_CHECKDIGIT (A4/A9)
+## 7. Specimen discovery and flagged-row retrieval (A4/A9) — CORRECTED 2026-11-24
 
-First locate one corpus-real INVALID_CHECKDIGIT specimen (any Legacy rows file works; keep the raw
-path private, record only the facts needed):
+**Why this section was corrected.** The D05 §5 parenthetical "Legacy era: 215,393 rows ≈5.4%"
+was produced by the D03 evidence tool's check-digit routine (`tools/d03_fixture_scan/d03_fixtures.py:82-118`),
+which evaluates Luhn over `v[1:11]` (dropping the leading country-code character) — not the
+governed ISO 6166 check. W1 (the engine that qualified M2, `d3269b73…`) implements ISO 6166 and
+finds **zero** invalid check digits on the published 3,554-row sample (W1-DIV-1,
+`src/nse_engine/contract.py` `KNOWN_EVIDENCE_DIVERGENCES[0]`; rows.py docstring). The canonical
+M2 therefore very likely contains **zero** `INVALID_CHECKDIGIT` rows — which is exactly why the
+literal search below returns zero matches. That is the expected package content, not a search
+failure and not package corruption. The Q8 census (one pass, engine-computed) decides what the
+real flagged population is.
+
+### 7a. Whole-package verdict sweep (one pass, all five literals, no row content printed)
 
 ```powershell
-Select-String -Path C:\M2\i4-20261008-M2\partitions\legacy13\2016\rows\*.rows.jsonl -Pattern '"isin_validity":"INVALID_CHECKDIGIT"' | Select-Object -First 3 | ForEach-Object { $_.Line } | Tee-Object .\specimen-lines-private.txt
+@'
+import json, os, sys
+counts = {k: 0 for k in ("VALID", "BLANK", "INVALID_LEN", "INVALID_PREFIX", "INVALID_CHARSET", "INVALID_CHECKDIGIT")}
+flags = 0
+for dirpath, _dirnames, filenames in os.walk(r"C:\M2\i4-20261008-M2\partitions"):
+    for f in filenames:
+        if not f.endswith(".rows.jsonl"):
+            continue
+        with open(os.path.join(dirpath, f), encoding="utf-8") as h:
+            for line in h:
+                line = line.strip()
+                if not line:
+                    continue
+                o = json.loads(line)
+                v = o.get("isin_validity")
+                if v in counts:
+                    counts[v] += 1
+                flags += sum(1 for fl in (o.get("flags") or []))
+print("validity_counts", json.dumps(counts, sort_keys=True))
+print("total_flag_entries", flags)
+'@ | Set-Content -Encoding utf8 C:\M2state\verdict_census.py
+python C:\M2state\verdict_census.py | Tee-Object .\verdict-counts.txt
 ```
 
-(The Legacy census carries 215,393 INVALID_CHECKDIGIT rows; almost any Legacy member yields
-specimens.) From the printed lines, note: `source_values.listing_symbol` (e.g. `TCS`), `series`,
-`business_date`, `isin_normalized`, `flags[].name`.
+Expected (evidence-informed, not assumed): `VALID ≈ 5,689,948`, `INVALID_LEN = 1`, all other
+categories `0`, `total_flag_entries = 1`. **Record the printed counts verbatim — do not edit them.**
+If `INVALID_CHECKDIGIT` is anything other than `0`, note it and proceed with 7c using that literal.
+
+### 7b. Authoritative engine-side census (Q8)
 
 ```powershell
-$spec = @{ listing_symbol = "<SYMBOL from specimen>"; date = "<business_date from specimen>" }   # fill in
-$body = @{ exchange="NSE_EQ"; frequency="1D"; adjustmentMode="RAW_UNADJUSTED"; series="<series>"; symbol=$spec.listing_symbol; from=$spec.date; to=$spec.date } | ConvertTo-Json -Compress
+python -m serving build --package C:\M2\i4-20261008-M2 --state C:\M2state | Tee-Object .\serving-index-build.txt
+python -m serving quality --package C:\M2\i4-20261008-M2 --m2 --state C:\M2state | Tee-Object .\q8-quality.json
+```
+
+Expected: `q8-quality.json` carries `"flag_census"` with the **engine-computed** counts (likely
+`{"isin_invalid_length": 1}` or `{}`), `"quarantine"` with `"count": 0`. Record verbatim. (The
+serving index is class-(4) like the ISIN index; both stay outside the package.)
+
+### 7c. Locate the flagged specimen (works for whichever flagged population exists)
+
+```powershell
+Get-ChildItem -Recurse -Filter *.rows.jsonl -Path C:\M2\i4-20261008-M2\partitions |
+  Select-String -SimpleMatch '"isin_validity":"INVALID_LEN"' | Select-Object -First 3 |
+  ForEach-Object { $_.Line } | Tee-Object .\specimen-lines-private.txt
+```
+
+From the printed line(s), note exactly: `source_values.listing_symbol`, `source_values.series`,
+`business_date`, `isin_normalized`, `flags[].name` (for the INVALID_LEN row: `isin_invalid_length`).
+(`Select-String -SimpleMatch` avoids regex escaping issues; if 7a found a nonzero
+`INVALID_CHECKDIGIT`, substitute that literal.)
+
+### 7d. Corrected retrieval request (same A4/A9 objective; real flagged population)
+
+```powershell
+$spec = @{ symbol = "<listing_symbol from 7c>"; series = "<series from 7c>"; date = "<business_date from 7c>" }
+$body = @{ exchange="NSE_EQ"; frequency="1D"; adjustmentMode="RAW_UNADJUSTED"; series=$spec.series; symbol=$spec.symbol; from=$spec.date; to=$spec.date } | ConvertTo-Json -Compress
 $body | Set-Content -NoNewline .\bars-body.json
 curl.exe -s -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $env:IIPS_EQUICORE_TRANSPORT_TOKEN" --data-binary "@.\bars-body.json" -D .\bars-headers.txt -o .\bars-specimen.json -w "HTTP %{http_code}`n" http://127.0.0.1:8614/v1/historical/bars
+python -c "import json; m=json.load(open('.\bars-specimen.json',encoding='utf-8')); rows=[r for r in m['rows'] if r['business_date']=='$($spec.date)']; print('rows_on_date', len(rows), 'total', m['total']); [print(json.dumps({k: r.get(k) for k in ('isin_normalized','isin_validity','flags','raw_line')}, ensure_ascii=False)) for r in rows]" | Tee-Object .\specimen-check.txt
 ```
 
-- **Expected success (A4/A9):** HTTP `200`; `.\bars-specimen.json` contains a row whose
-  `isin_validity` is `INVALID_CHECKDIGIT`, whose `flags[]` includes an entry with
-  `name = "isin_invalid_checkdigit"`, verbatim `isin_normalized` from the specimen, and no
-  `raw_line` key; `"total"` ≥ 1. The flags make the row **informationally** flagged, never omitted.
+- **Expected success (A4 objective; honestly scoped to what M2 contains):** HTTP `200`; the
+  specimen row is present in `.\bars-specimen.json` **with** `isin_validity` equal to whatever 7a
+  reported (`INVALID_LEN` most likely), `flags[]` containing the matching governed name
+  (`isin_invalid_length`), `isin_normalized` verbatim, and **no** `raw_line` key. Zero rows
+  dropped/de-ranked.
+- **A9 as originally worded ("at least one Legacy instrument known to carry an invalid check
+  digit") is expected NOT to be satisfiable on this M2** — the governed-ISO-6166 qualification found
+  no invalid check digits (W1-DIV-1). If 7a/7b confirm zero `INVALID_CHECKDIGIT`, record Step 7 as
+  **A9-UNMET-ON-QUALIFIED-PACKAGE (evidence attached)** or ask Ramki to direct an A9 disposition —
+  either way, do **not** report A9 as passed, and do not touch the package or the serving code to
+  manufacture a specimen. The fidelity leg (flagged rows served verbatim with flags) is still
+  verified end-to-end on the real M2 flagged population, and the automated suite covers
+  INVALID_CHECKDIGIT/INVALID_LEN/BLANK fixtures (`test_invalid_checkdigit_and_len_rows_are_served_verbatim`).
 - **Failure interpretation:** specimen row missing, flags stripped, or row de-ranked → stop; capture;
-  A4/A9 fail. If HTTP `400/422` → check body fields (`exchange`/`frequency`/`adjustmentMode` must be
-  exactly `NSE_EQ`/`1D`/`RAW_UNADJUSTED`).
+  A4 fails. HTTP `400/422` → body fields must be exactly `exchange: NSE_EQ`, `frequency: 1D`,
+  `adjustmentMode: RAW_UNADJUSTED`.
+
 
 ## 8. Count parity against the package (A3)
 
@@ -268,7 +336,9 @@ Get-ChildItem .\verify-*.txt,.\rev-*.txt,.\index-*.txt,.\bars-*.json,.\eod-obser
 | rebuilt digest ≠ first digest | nondeterminism | stop; A5 fails |
 | 401 without token / 401 with wrong token is **expected** | contract working (EC-AC-01) | record as pass |
 | 403 on `Host: 192.0.2.5` is **expected** | loopback-Host contract | record as pass |
-| `bars` missing the INVALID_CHECKDIGIT row | A4/A9 failure | stop; capture |
+| `verdict-counts.txt` shows `INVALID_CHECKDIGIT > 0` | engine census contradicts W1-DIV-1 expectation | unprecedented — stop; capture; report to Arena |
+| `verdict-counts.txt` all zero except VALID/INVALID_LEN | expected M2 content (W1-DIV-1) | proceed with INVALID_LEN specimen; A9 as worded UNMET (not passed) |
+| `bars` missing the flagged specimen row | A4 failure | stop; capture |
 | `calendar-unavailable` | class-(2) calendar pair absent in this M2 | record verbatim; EC-AC-04 not met by this run |
 | any `Access-Control-*` header | EC-AC-01 failure | stop |
 
@@ -281,7 +351,7 @@ row payloads):
 2. `rev-tree.txt`, `rev-type.txt`, `rev-fingerprints.txt`
 3. `index-build-a.txt`, `index-info-a.txt`, `index-sha-a.txt`, `index-build-b.txt`, `index-sha-b.txt`, `index-compare.txt`
 4. `health-noauth.json`, `health-wrong.json`, `health-badhost.txt`, `health-headers.txt`, `health-ok.json`, `server.log`
-5. `specimen-lines-private.txt` (or a redacted version naming only symbol/series/date/flag — owner's call), `bars-body.json`, `bars-specimen.json`, `bars-specimen-2.json`, `bars-1.json`, `bars-2.json`, `bars-identity.txt`, `bars-wide.json`, `bars-counts.txt`
+5. `verdict-counts.txt`, `serving-index-build.txt`, `q8-quality.json`, `specimen-lines-private.txt` (or redacted), `bars-body.json`, `bars-specimen.json`, `specimen-check.txt`, `bars-specimen-2.json`, `bars-1.json`, `bars-2.json`, `bars-identity.txt`, `bars-wide.json`, `bars-counts.txt`
 6. `eod-observation.json`, `bars-headers-2.txt`, `calendar-window.json`, digest-recompute output
 7. `SHA256SUMS.txt`
 
