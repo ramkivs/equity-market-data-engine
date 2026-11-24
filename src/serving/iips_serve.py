@@ -29,7 +29,7 @@ read at startup and never mutated.
 Run:
 
     PYTHONPATH=src python3 -m serving.iips_serve --package /path/to/i4-20261008-M2 \
-        --state /path/to/state --token "$IIPS_EQUI_CORE_TOKEN" [--bind 127.0.0.1] [--port 8614]
+        --state /path/to/state --token "$IIPS_EQUICORE_TRANSPORT_TOKEN" [--bind 127.0.0.1] [--port 8614]
 """
 
 from __future__ import annotations
@@ -638,16 +638,20 @@ def load_state(package: str, state_dir: str, token: str, spec=DEFAULT_M2_SPEC) -
     return ServerState(baseline, package_root, state_dir, token)
 
 
-def main(argv: Optional[list] = None) -> int:
-    from http.server import ThreadingHTTPServer
-
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="D40 iips-equicore-historical/v1 — headless loopback serving API")
     parser.add_argument("--package", required=True, help="path to the qualified M2 package (read-only)")
     parser.add_argument("--state", required=True, help="state root with serving_index + ISIN index (outside the package)")
     parser.add_argument("--bind", default=DEFAULT_BIND, help="bind address (loopback only; 0.0.0.0 refused)")
     parser.add_argument("--port", default=DEFAULT_PORT, type=int, help="bind port (default 8614)")
-    parser.add_argument("--token", default=os.environ.get("IIPS_EQUI_CORE_TOKEN"), help="bearer token (or IIPS_EQUI_CORE_TOKEN)")
-    args = parser.parse_args(argv)
+    parser.add_argument("--token", default=os.environ.get("IIPS_EQUICORE_TRANSPORT_TOKEN"), help="bearer token (or IIPS_EQUICORE_TRANSPORT_TOKEN)")
+    return parser
+
+
+def main(argv: Optional[list] = None) -> int:
+    from http.server import ThreadingHTTPServer
+
+    args = build_parser().parse_args(argv)
 
     bind = (args.bind or "").strip().lower()
     if bind not in LOOPBACK_BINDS:
@@ -658,7 +662,7 @@ def main(argv: Optional[list] = None) -> int:
         )
         return 2
     if not args.token:
-        print("REFUSING TO START: a bearer token is mandatory (--token or IIPS_EQUI_CORE_TOKEN).", file=sys.stderr)
+        print("REFUSING TO START: a bearer token is mandatory (--token or IIPS_EQUICORE_TRANSPORT_TOKEN).", file=sys.stderr)
         return 2
     try:
         state = load_state(args.package, args.state, args.token, DEFAULT_M2_SPEC)

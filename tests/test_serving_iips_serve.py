@@ -729,3 +729,134 @@ def _iter_rows(baseline):
                 if not line.strip():
                     continue
                 yield relative, line_number, json.loads(line)
+
+class TokenContractRegressionTests(unittest.TestCase):
+    """D40 EC-DEC-01 / transport contract: the ONLY environment variable is
+    IIPS_EQUICORE_TRANSPORT_TOKEN. The earlier IIPS_EQUI_CORE_TOKEN name is
+    rejected as a configuration source (no silent dual-read)."""
+
+    def _parse(self, argv, env):
+        import os
+
+        from serving.iips_serve import build_parser
+
+        old = {key: os.environ.get(key) for key in ("IIPS_EQUICORE_TRANSPORT_TOKEN", "IIPS_EQUI_CORE_TOKEN")}
+        try:
+            for key in old:
+                if key in env:
+                    os.environ[key] = env[key]
+                elif key in os.environ:
+                    del os.environ[key]
+            return build_parser().parse_args(argv)
+        finally:
+            for key, value in old.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def test_transport_token_env_var_is_the_default(self):
+        args = self._parse(["--package", "/p", "--state", "/s"], {"IIPS_EQUICORE_TRANSPORT_TOKEN": "contract-token"})
+        self.assertEqual(args.token, "contract-token")
+
+    def test_old_env_var_name_is_not_read(self):
+        args = self._parse(["--package", "/p", "--state", "/s"], {"IIPS_EQUI_CORE_TOKEN": "legacy-token"})
+        self.assertIsNone(args.token)
+
+    def test_explicit_flag_still_wins(self):
+        args = self._parse(["--package", "/p", "--state", "/s", "--token", "flag-token"],
+                           {"IIPS_EQUICORE_TRANSPORT_TOKEN": "contract-token"})
+        self.assertEqual(args.token, "flag-token")
+
+
+class AuthEnforcementMatrixTests(FixtureServer):
+    """Every route — known and unknown, GET/POST/PUT/PATCH/DELETE/OPTIONS —
+    rejects a missing/invalid bearer token with 401 before any other work."""
+
+    ROUTES = [
+        ("GET", "/v1/health"),
+        ("GET", "/v1/calendar"),
+        ("GET", "/v1/instruments/INE002A01018/associations"),
+        ("POST", "/v1/historical/bars"),
+        ("POST", "/v1/historical/eod-observation"),
+        ("GET", "/v1/nope"),
+        ("POST", "/v1/nope"),
+        ("PUT", "/v1/health"),
+        ("PATCH", "/v1/health"),
+        ("DELETE", "/v1/health"),
+        ("OPTIONS", "/v1/health"),
+    ]
+
+    def test_every_route_requires_the_bearer_token(self):
+        for method, path in self.ROUTES:
+            with self.subTest(method=method, path=path):
+                body = {"exchange": "NSE_EQ", "frequency": "1D", "adjustmentMode": "RAW_UNADJUSTED",
+                        "series": "EQ", "from": "2016-01-04", "to": "2016-01-05", "symbol": "TCS"} if method == "POST" else None
+                status, headers, raw = self._unauthenticated_request(method, path, body)
+                self.assertEqual(status, 401, "%s %s returned %d, expected 401" % (method, path, status))
+                self.assertNotIn("Access-Control-Allow-Origin", headers)
+
+    def _unauthenticated_request(self, method, path, body):
+        url = "http://127.0.0.1:%d%s" % (self.port, path)
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(url, data=data, method=method)
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Authorization", "Bearer definitely-wrong")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.status, dict(resp.headers.items()), resp.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, dict(exc.headers.items()), exc.read()
+
+    def test_missing_bearer_header_is_401(self):
+        url = "http://127.0.0.1:%d/v1/health" % self.port
+        req = urllib.request.Request(url, method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                status = resp.status
+                headers = dict(resp.headers.items())
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+            headers = dict(exc.headers.items())
+        self.assertEqual(status, 401)
+        self.assertIn("WWW-Authenticate", headers)
+
+    def test_old_env_var_does_not_authenticate_against_default_token(self):
+        # the service was constructed with TOKEN ("test-token-phase-b"); a header
+        # carrying the retired env-var name's *value* semantics is irrelevant —
+        # only the configured bearer token authorizes (constant-time compare).
+        status, _headers, _body = self.req("GET", "/v1/health", headers={"Authorization": "Bearer IIPS_EQUI_CORE_TOKEN"})
+        self.assertEqual(status, 401)
+
+class FailClosedStartupTests(FixtureServer):
+    """A1/A2 at the serving boundary: the service cannot be opened against a
+    non-M2 identity, and serving never mutates the package bytes."""
+
+    def test_load_state_refuses_non_m2_package(self):
+        from serving.baseline import BaselineError, DEFAULT_M2_SPEC
+
+        with self.assertRaises(BaselineError):
+            from serving.iips_serve import load_state
+
+            load_state(self.pkg, os.path.join(self.root, "state2"), TOKEN, DEFAULT_M2_SPEC)
+
+    def test_full_package_byte_snapshot_unchanged_after_serving(self):
+        def snapshot():
+            sums = {}
+            for dirpath, _dirnames, filenames in os.walk(self.pkg):
+                for name in filenames:
+                    path = os.path.join(dirpath, name)
+                    with open(path, "rb") as handle:
+                        sums[os.path.relpath(path, self.pkg).replace(os.sep, "/")] = hashlib.sha256(handle.read()).hexdigest()
+            return sums
+
+        before = snapshot()
+        for _ in range(2):
+            self.bars(symbol="TCS", **{"from": "2016-01-04", "to": "2016-01-05"})
+            self.req("GET", "/v1/health")
+            self.req("GET", "/v1/calendar")
+            self.req("GET", "/v1/instruments/INE002A01018/associations")
+        build_index(self.handle)
+        build_isin_index(self.handle)
+        after = snapshot()
+        self.assertEqual(before, after)
