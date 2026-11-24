@@ -218,6 +218,6 @@ never a data event; rebuild reproduces identical digests (A5).
 
 - Branch `arena/ddcaa938-equity-market-data-engine` (based on `origin/main` = `a4e298f…`); commits are
   the delivery vehicle for this record; the PR targets `main`.
-- PR: (created at publication; number recorded in the merge/completion report and README index).
+- PR: **#8** (`https://github.com/ramkivs/equity-market-data-engine/pull/8`), targeting `main`; evidence limitations carried in the PR body verbatim (A9 / M2 legs blocked).
 - M2 acceptance is **not** attested by this record beyond §5–§6 as written; A9 and the Windows legs
   remain open until the owner executes §4 on the Windows host.
